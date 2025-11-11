@@ -1,197 +1,74 @@
-{% extends "plugin.html" %}
-
-{% block content %}
-<!-- <div id="units-container" data-units="{{ units }}"></div> -->
-
-
-<div class="weather-dashboard">
-  <!-- Current Date -->
-  <div class="header">
-    <div class="title">{{ title }}</div>
-    <div class="current-date">{{ current_date }}</div>
-  </div>
-
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Electricity Prices</title>
+  <link rel="stylesheet" href="electricity_price.css">
+</head>
+<body>
   <div class="chart-container">
+    <div class="date-label">
+      {{ current_date }}
+    </div>
     <canvas id="priceChart"></canvas>
   </div>
-</div>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script>
+    const data = {{ data | tojson | safe}};
 
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    // Extract time and price for chart
+    const labels = data.map(entry => entry.time_start.slice(11, 16));
+    const sekPrices = data.map(entry => Number(entry.SEK_per_kWh));
+    const maxPrice = Math.max(...sekPrices) + 0.2;
 
-<!-- <script>
-  document.addEventListener("DOMContentLoaded", function () {
-    const canvas = document.getElementById('priceChart');
-    const ctx = canvas.getContext('2d');
-    const rect = canvas.getBoundingClientRect();
-
-    // Extract hourly temperature and labels from template variables
-    const labels = [{% for hour in hourly_forecast %}"{{ hour.time }}"{% if not loop.last %}, {% endif %}{% endfor %}];
-    const temperatures = [{% for hour in hourly_forecast %}{{ hour.temperature }}{% if not loop.last %}, {% endif %}{% endfor %}];
-    const precipitation = [{% for hour in hourly_forecast %}{{ hour.precipitation * 100}}{% if not loop.last %}, {% endif %}{% endfor %}]; // Convert to percentage
-    const rain = [{% for hour in hourly_forecast %}{{ hour.rain or 0 }}{% if not loop.last %}, {% endif %}{% endfor %}];
-	const units = document.getElementById('units-container').dataset.units;
-	const isImperial = units === "imperial";
-	const unit = isImperial ? "in" : "mm";
-	const threshold = isImperial ? 0.0035 : 0.09;
-	
-    // Find min and max temperatures
-    const minTemp = Math.min(...temperatures);
-    var maxTemp = Math.max(...temperatures);
-	
-    Chart.register({
-      id: 'annotationRain',
-      afterDatasetsDraw(chart, args, pluginOptions) {
-        const { ctx } = chart;
-        const rainData = pluginOptions.precipitationData || [];
-        const meta = chart.getDatasetMeta(1);
-
-        ctx.save();
-        ctx.textAlign = 'center';
-
-        meta.data.forEach((bar, i) => {
-          const rainAmount = rainData[i];
-          if (rainAmount && rainAmount > threshold) {
-            const x = bar.x;
-            const y = bar.y;
-			const base = bar.base;
-			const height = base - y;
-			
-			let textY, unitY;
-			
-			if (height < 25) {
-			  textY = y - 10;
-			  unitY = y - 3;
-			} else {
-			  textY = y + 13;
-			  unitY = y + 20;
-			}
-            ctx.fillStyle = "{{ plugin_settings.textColor }}";
-            ctx.fillText(rainAmount.toFixed(2), x, textY);
-            ctx.fillText(unit, x, unitY); 
-          }
-        });
-
-        ctx.restore();
-      }
-    });
-	
-    const chart = new Chart(ctx, {
+    const ctx = document.getElementById('priceChart').getContext('2d');
+    const priceChart = new Chart(ctx, {
       type: 'line',
       data: {
         labels: labels,
         datasets: [{
-          type: 'line',
-          label: 'Price / kWh',
-          data: temperatures,
-          borderColor: 'rgba(241, 122, 36, 0.9)', // Line color
-          borderWidth: 2,
-          pointRadius: 0, // Hide points
-          fill: true, // Enable filling the area under the line
-          tension: 0.5
-        }
-      ]
+          label: 'SEK per kWh',
+          data: sekPrices,
+          borderColor: 'rgba(54, 162, 235, 1)',
+          backgroundColor: 'rgba(54, 162, 235, 0.2)',
+          fill: true,
+          tension: 0.3
+        }]
       },
       options: {
-        animation: {
-          duration: 0, // general animation time
-        },
+//        parsing: {
+//          yAxisKey: 'SEK_per_kWh',
+//          xAxisKey: 'time_start'
+//        },
         responsive: true,
-        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            display: true,
+            position: 'top'
+          },
+          title: {
+            display: true,
+            text: 'Electricity Prices (SEK/kWh)'
+          }
+        },
         scales: {
           x: {
-            ticks: {
-              autoSkip: true,
-              padding: 0,
-              maxRotation: 0, // Prevent label rotation
-              minRotation: 0, // Prevent label rotation
-              color: "{{ plugin_settings.textColor }}",
-              font: {
-                family: 'Jost'
-              }
-            },
-            grid: {
-              tickLength: 0,
-              display: false // Hide x-axis grid
-            },
-            offset: true,
-            gridLines: {
-                drawBorder: false,
+            title: {
+              display: true,
+              text: 'Time'
             }
           },
           y: {
-            ticks: {
-              padding: 0,
-              color: "{{ plugin_settings.textColor }}",
-              font: {
-                family: 'Jost'
-              },
-              autoSkip: false,
-              callback: function(value, index, values) {
-                if (index === values.length-1) return maxTemp + "°";
-                else if (index === 0) return minTemp + "°";
-                else return '';
-              }
+            title: {
+              display: true,
+              text: 'SEK/kWh'
             },
-            grid: { display: false },
-            min: minTemp,
-            max: maxTemp,
-          },
-          y1: {
-            position: 'right',
-            grid: { display: false },
-            ticks: {
-              padding: 0,
-              color: "{{ plugin_settings.textColor }}",
-              font: {
-                family: 'Jost'
-              },
-              autoSkip: false,
-              callback: function(value, index, values) {
-                if (index === values.length - 1) return "100%";
-                else if (index === 0) return "0%";
-                else return '';
-              }
-            },
-            min: 0,
-            max: 100,
-          }
-        },
-        plugins: {
-          legend: { display: false },
-		  {% if plugin_settings.displayRain == "true" %}
-			annotationRain: { precipitationData: rain }
-	      {% endif %}
-        },
-        elements: {
-          line: {
-            borderJoinStyle: 'round' // Smoother line connection
+            beginAtZero: true,
+            suggestedMax: maxPrice
           }
         }
       }
     });
-
-    chart.update();
-
-    // Now, after the chart is created, we can access the scales
-    const gradientStart = chart.scales['y'].getPixelForValue(maxTemp); // Max temperature
-    const gradientEnd = chart.scales['y'].getPixelForValue(minTemp);   // Min temperature
-
-    // Create gradient based on y-axis values
-    const tempGradient = ctx.createLinearGradient(0, gradientStart, 0, gradientEnd+10);
-    tempGradient.addColorStop(0, 'rgba(252,204,5, 0.95)'); // Top of the gradient (max temperature)
-    tempGradient.addColorStop(1, 'rgba(252,204,5, 0.01)'); // Bottom of the gradient (min temperature)
-
-    // Update the chart to apply the gradient
-    chart.data.datasets[0].backgroundColor = tempGradient;
-
-    // Create gradient based on y-axis values
-    const precipitationGradient = ctx.createLinearGradient(0, gradientStart, 0, gradientEnd);
-    precipitationGradient.addColorStop(0, 'rgba(26, 111, 176, 0.8)'); // Top of the gradient (max temperature)
-    precipitationGradient.addColorStop(1, 'rgba(194, 223, 246, 0)'); // Bottom of the gradient (min temperature)
-
-    chart.data.datasets[1].backgroundColor = precipitationGradient;
-
-    chart.update();
-  });
-</script> -->
-{% endblock %}
+  </script>
+</body>
+</html>

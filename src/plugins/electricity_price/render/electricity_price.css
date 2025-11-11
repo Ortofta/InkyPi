@@ -1,0 +1,21 @@
+body {
+	font-family: Arial, sans-serif;
+	background: #fff;
+	margin: 0;
+	padding: 0;
+}
+
+.chart-container {
+	width: 90vw;
+	max-width: 800px;
+	margin: 40px auto;
+	background: #f9f9f9;
+	border-radius: 12px;
+	box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+	padding: 24px;
+}
+
+#priceChart {
+	width: 100% !important;
+	height: 400px !important;
+}
