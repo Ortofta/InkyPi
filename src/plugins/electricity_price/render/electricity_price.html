@@ -6,22 +6,30 @@
   <link rel="stylesheet" href="electricity_price.css">
 </head>
 <body>
+  {# debug block removed - now rendering chart only #}
   <div class="chart-container">
     <div class="date-label">
       {{ current_date }}
     </div>
-    <canvas id="priceChart"></canvas>
+    <canvas id="priceChart" width="{{ width }}" height="{{ height }}"></canvas>
   </div>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script>
-    const data = {{ data | tojson | safe}};
+    // Build arrays directly from template JSON to avoid runtime parsing differences
+    const sekPrices = {{ data | map(attribute='SEK_per_kWh') | list | tojson }};
+    const times = {{ data | map(attribute='time_start') | list | tojson }};
 
-    // Extract time and price for chart
-    const labels = data.map(entry => entry.time_start.slice(11, 16));
-    const sekPrices = data.map(entry => Number(entry.SEK_per_kWh));
-    const maxPrice = Math.max(...sekPrices) + 0.2;
+    // Ensure numbers
+    for (let i = 0; i < sekPrices.length; i++) {
+      sekPrices[i] = Number(sekPrices[i]);
+    }
+
+    const labels = times.map(t => t.slice(11, 16));
+    const maxPrice = Math.max(...sekPrices);
+    // no debug output; keep maxPrice for title only
 
     const ctx = document.getElementById('priceChart').getContext('2d');
+    // Use plain numeric dataset with labels to avoid parsing issues
     const priceChart = new Chart(ctx, {
       type: 'line',
       data: {
@@ -48,7 +56,7 @@
           },
           title: {
             display: true,
-            text: 'Electricity Prices (SEK/kWh)'
+            text: maxPrice
           }
         },
         scales: {
@@ -63,12 +71,16 @@
               display: true,
               text: 'SEK/kWh'
             },
-            beginAtZero: true,
-            suggestedMax: maxPrice
+            beginAtZero: false,
+              suggestedMax: maxPrice, // Chart.js will auto-scale
+            ticks: {
+              stepSize: 0.1
+            }
           }
         }
       }
     });
+    // no debug types shown
   </script>
 </body>
 </html>

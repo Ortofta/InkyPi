@@ -40,6 +40,24 @@ journalctl -u inkypi -f
 sudo systemctl restart inkypi.service
 ```
 
+### Canvas / Chart rendering looks scaled or blurry
+
+If charts or canvas-based graphics appear visually scaled (values look smaller than expected) when rendered to images, this is often due to the browser device pixel ratio used by headless Chromium. You can control the DPR used by Chromium by setting the `INKYPI_DEVICE_SCALE_FACTOR` environment variable before restarting the service.
+
+Force DPR to 1 (recommended for consistent screenshots):
+```bash
+export INKYPI_DEVICE_SCALE_FACTOR=1
+sudo systemctl restart inkypi.service
+```
+
+Unset the variable to return to the system/browser default:
+```bash
+unset INKYPI_DEVICE_SCALE_FACTOR
+sudo systemctl restart inkypi.service
+```
+
+This setting helps ensure canvases are rasterized at the expected pixel density and fixes many cases where chart points appear incorrectly scaled in headless screenshots.
+
 
 ## Run InkyPi Manually
 

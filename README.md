@@ -84,6 +84,18 @@ Note:
 
 For more details, including instructions on how to image your microSD with Raspberry Pi OS, refer to [installation.md](./docs/installation.md). You can also checkout [this YouTube tutorial](https://youtu.be/L5PvQj1vfC4).
 
+### Headless rendering DPI (optional)
+
+When InkyPi renders HTML to images it uses a headless Chromium build. In some environments the browser device pixel ratio (DPR) can cause canvas-based charts and graphics to be rasterized at unexpected scales. You can control the DPR used by Chromium with the environment variable `INKYPI_DEVICE_SCALE_FACTOR`.
+
+Example (force DPR = 1):
+```bash
+export INKYPI_DEVICE_SCALE_FACTOR=1
+sudo systemctl restart inkypi.service
+```
+
+If the variable is not set the default Chromium behaviour is used. Setting this to `1` typically fixes issues where plotted values look visually scaled in headless screenshots.
+
 ## Update
 To update your InkyPi with the latest code changes, follow these steps:
 1. Navigate to the project directory:

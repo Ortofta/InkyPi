@@ -108,7 +108,7 @@ def take_screenshot(target, dimensions, timeout_ms=None):
             img_file_path = img_file.name
 
         command = [
-            "chromium-headless-shell",
+            "/usr/lib64/chromium-browser/headless_shell",
             target,
             "--headless",
             f"--screenshot={img_file_path}",
@@ -117,6 +117,10 @@ def take_screenshot(target, dimensions, timeout_ms=None):
             "--disable-gpu",
             "--use-gl=swiftshader",
             "--hide-scrollbars",
+            # Device scale factor can be controlled via environment variable INKYPI_DEVICE_SCALE_FACTOR
+            # Example: export INKYPI_DEVICE_SCALE_FACTOR=1  (or 2, etc.)
+            # If not set, the flag will not be passed and Chromium default will be used.
+            # (Add the flag below if an env value is provided.)
             "--in-process-gpu",
             "--js-flags=--jitless",
             "--disable-zero-copy",
@@ -128,6 +132,10 @@ def take_screenshot(target, dimensions, timeout_ms=None):
         ]
         if timeout_ms:
             command.append(f"--timeout={timeout_ms}")
+        # Optionally force device scale factor (DPR)
+        dpr = os.environ.get("INKYPI_DEVICE_SCALE_FACTOR")
+        if dpr:
+            command.insert(6, f"--force-device-scale-factor={dpr}")
         result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
         # Check if the process failed or the output file is missing

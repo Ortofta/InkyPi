@@ -1,6 +1,27 @@
 {
     "name": "InkyPi Development",
     "display_type": "mock",
-    "resolution": [800, 480],
-    "orientation": "horizontal"
+    "resolution": [
+        800,
+        480
+    ],
+    "orientation": "horizontal",
+    "playlist_config": {
+        "playlists": [
+            {
+                "name": "Default",
+                "start_time": "00:00",
+                "end_time": "24:00",
+                "plugins": [],
+                "current_plugin_index": null
+            }
+        ],
+        "active_playlist": "Default"
+    },
+    "refresh_info": {
+        "refresh_time": "2025-11-25T19:29:56.462494+00:00",
+        "image_hash": "d5ea8d3fa24c92de91a172be47eb76c8f12b9821f23008c024801b88939ce375",
+        "refresh_type": "Manual Update",
+        "plugin_id": "electricity_price"
+    }
 }

@@ -53,7 +53,7 @@ class ElectricityPrice(BasePlugin):
             last_refresh_time = now.strftime("%Y-%m-%d %I:%M %p")
         template_params["last_refresh_time"] = last_refresh_time
 
-        logger.info(f"Using template parameters: {template_params}")
+        #logger.info(f"Using template parameters: {template_params}")
 
         image = self.render_image(dimensions, "electricity_price.html", "electricity_price.css", template_params)
 
