@@ -11,12 +11,12 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def get_service_url():
+def get_service_url(zone="SE4"):
     today = datetime.now().date()
     year = today.year
     month = f"{today.month:02d}"
     day = f"{today.day:02d}"
-    return f"https://www.elprisetjustnu.se/api/v1/prices/{year}/{month}-{day}_SE4.json"
+    return f"https://www.elprisetjustnu.se/api/v1/prices/{year}/{month}-{day}_{zone}.json"
 
 
 @dataclass
@@ -32,7 +32,8 @@ class ElectricityPrice(BasePlugin):
     data: list[ElectricityPriceEntry] = []
 
     def generate_image(self, settings, device_config):
-        self.data = self.fetch_json()
+        zone = settings.get("zone", "SE4")
+        self.data = self.fetch_json(zone)
         data_dicts = [asdict(entry) for entry in self.data]
         template_params = {"data": data_dicts}
 
@@ -49,6 +50,7 @@ class ElectricityPrice(BasePlugin):
             "%Y-%m-%d"
         )
         template_params["current_date"] = datetime.now(tz).strftime("%Y-%m-%d")
+        template_params["zone"] = zone
 
         # Add last refresh time
         now = datetime.now(tz)
@@ -72,8 +74,8 @@ class ElectricityPrice(BasePlugin):
 
         return image
 
-    def fetch_json(self):
-        url = get_service_url()
+    def fetch_json(self, zone="SE4"):
+        url = get_service_url(zone)
         response = requests.get(url)
         response.raise_for_status()
         data = response.json()
