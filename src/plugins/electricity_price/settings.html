@@ -1,0 +1,17 @@
+<div class="form-group nowrap">
+  <label for="zone" class="form-label">Zone:</label>
+  <select id="zone" name="zone" class="form-input">
+    <option value="SE1">SE1</option>
+    <option value="SE2">SE2</option>
+    <option value="SE3">SE3</option>
+    <option value="SE4">SE4</option>
+  </select>
+</div>
+
+<script>
+  document.addEventListener("DOMContentLoaded", () => {
+    if (loadPluginSettings) {
+      document.getElementById("zone").value = pluginSettings.zone || "SE1";
+    }
+  });
+</script>

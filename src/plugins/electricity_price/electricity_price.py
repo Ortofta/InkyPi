@@ -1,10 +1,11 @@
-from dataclasses import dataclass, asdict
-from datetime import datetime, timezone
-from plugins.base_plugin.base_plugin import BasePlugin
-import requests
-import pytz
 import logging
-import json
+from dataclasses import asdict, dataclass
+from datetime import datetime
+
+import pytz
+import requests
+
+from plugins.base_plugin.base_plugin import BasePlugin
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -17,6 +18,7 @@ def get_service_url():
     day = f"{today.day:02d}"
     return f"https://www.elprisetjustnu.se/api/v1/prices/{year}/{month}-{day}_SE4.json"
 
+
 @dataclass
 class ElectricityPriceEntry:
     SEK_per_kWh: float
@@ -24,6 +26,7 @@ class ElectricityPriceEntry:
     EXR: float
     time_start: str
     time_end: str
+
 
 class ElectricityPrice(BasePlugin):
     data: list[ElectricityPriceEntry] = []
@@ -42,7 +45,9 @@ class ElectricityPrice(BasePlugin):
         tz = pytz.timezone(timezone)
 
         template_params["plugin_settings"] = settings
-        template_params["title"] = "Electricity Prices - " + datetime.now(tz).strftime("%Y-%m-%d")
+        template_params["title"] = "Electricity Prices - " + datetime.now(tz).strftime(
+            "%Y-%m-%d"
+        )
         template_params["current_date"] = datetime.now(tz).strftime("%Y-%m-%d")
 
         # Add last refresh time
@@ -53,15 +58,20 @@ class ElectricityPrice(BasePlugin):
             last_refresh_time = now.strftime("%Y-%m-%d %I:%M %p")
         template_params["last_refresh_time"] = last_refresh_time
 
-        #logger.info(f"Using template parameters: {template_params}")
+        # logger.info(f"Using template parameters: {template_params}")
 
-        image = self.render_image(dimensions, "electricity_price.html", "electricity_price.css", template_params)
+        image = self.render_image(
+            dimensions,
+            "electricity_price.html",
+            "electricity_price.css",
+            template_params,
+        )
 
         if not image:
             raise RuntimeError("Failed to take screenshot, please check logs.")
-        
+
         return image
-    
+
     def fetch_json(self):
         url = get_service_url()
         response = requests.get(url)
