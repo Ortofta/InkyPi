@@ -14,6 +14,7 @@
     <canvas id="priceChart" width="{{ width }}" height="{{ height }}"></canvas>
   </div>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@2.2.1"></script>
   <script>
     // Build arrays directly from template JSON to avoid runtime parsing differences
     const sekPrices = {{ data | map(attribute='SEK_per_kWh') | list | tojson }};
@@ -26,6 +27,8 @@
 
     const labels = times.map(t => t.slice(11, 16));
     const maxPrice = Math.max(...sekPrices);
+    const maxPriceIndex = sekPrices.indexOf(maxPrice);
+    const maxPriceTime = labels[maxPriceIndex];
 
     const ctx = document.getElementById('priceChart').getContext('2d');
     const priceChart = new Chart(ctx, {
@@ -38,7 +41,19 @@
           borderColor: 'rgba(0, 0, 0, 1)',
           backgroundColor: 'rgba(128, 128, 128, 0.5)',
           fill: true,
-          tension: 0.3
+          tension: 0.3,
+          pointBackgroundColor: function(context) {
+            const index = context.dataIndex;
+            return index === maxPriceIndex ? 'rgba(255, 0, 0, 1)' : 'rgba(0, 0, 0, 1)';
+          },
+          pointRadius: function(context) {
+            const index = context.dataIndex;
+            return index === maxPriceIndex ? 5 : 0;
+          },
+          pointBorderWidth: function(context) {
+            const index = context.dataIndex;
+            return index === maxPriceIndex ? 2 : 0;
+          }
         }]
       },
       options: {
@@ -57,6 +72,31 @@
             text: maxPrice,
             color: '#000000',
             font: { size: 14, weight: '700' }
+          },
+          annotation: {
+            annotations: {
+              maxPriceAnnotation: {
+                type: 'label',
+                xValue: maxPriceTime,
+                yValue: maxPrice,
+                content: ['Högsta pris:', maxPrice.toFixed(2) + ' SEK/kWh'],
+                position: 'bottom',
+                yAdjust: 15,
+                backgroundColor: 'rgba(255, 0, 0, 0.8)',
+                color: '#FFFFFF',
+                font: {
+                  size: 10,
+                  weight: 'bold'
+                },
+                padding: {
+                  top: 4,
+                  bottom: 4,
+                  left: 8,
+                  right: 8
+                },
+                borderRadius: 4
+              }
+            }
           }
         },
         scales: {
@@ -73,7 +113,28 @@
             grid: { color: 'rgba(0,0,0,0.08)', borderColor: 'rgba(0,0,0,0.8)' }
           }
         }
-      }
+      },
+      plugins: [{
+        id: 'annotation',
+        beforeDraw: function(chart) {
+          const ctx = chart.ctx;
+          const meta = chart.getDatasetMeta(0);
+          const point = meta.data[maxPriceIndex];
+          
+          if (point) {
+            const x = point.x;
+            const y = point.y;
+            
+            // Draw a small circle around the point
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(x, y, 6, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(255, 0, 0, 0.15)';
+            ctx.fill();
+            ctx.restore();
+          }
+        }
+      }]
     });
   </script>
 </body>
