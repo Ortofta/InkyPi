@@ -16,7 +16,9 @@ def get_service_url(zone="SE4"):
     year = today.year
     month = f"{today.month:02d}"
     day = f"{today.day:02d}"
-    return f"https://www.elprisetjustnu.se/api/v1/prices/{year}/{month}-{day}_{zone}.json"
+    return (
+        f"https://www.elprisetjustnu.se/api/v1/prices/{year}/{month}-{day}_{zone}.json"
+    )
 
 
 @dataclass
@@ -30,6 +32,11 @@ class ElectricityPriceEntry:
 
 class ElectricityPrice(BasePlugin):
     data: list[ElectricityPriceEntry] = []
+
+    def generate_settings_template(self):
+        template_params = super().generate_settings_template()
+        template_params["zone"] = "SE4"
+        return template_params
 
     def generate_image(self, settings, device_config):
         zone = settings.get("zone", "SE4")

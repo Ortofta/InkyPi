@@ -106,9 +106,10 @@ def take_screenshot_html(html_str, dimensions, timeout_ms=None):
 
     return image
 
+
 def _find_chromium_binary():
     """Find the first available Chromium-based binary in system PATH."""
-    candidates = ["chromium-headless-shell", "chromium", "chrome"]
+    candidates = ["chromium-headless-shell", "chromium", "chrome", "chromium-browser"]
     for candidate in candidates:
         path = shutil.which(candidate)
         if path:
