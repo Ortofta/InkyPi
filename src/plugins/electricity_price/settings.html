@@ -1,17 +1,155 @@
 <div class="form-group nowrap">
-  <label for="zone" class="form-label">Zone:</label>
-  <select id="zone" name="zone" class="form-input">
-    <option value="SE1">SE1</option>
-    <option value="SE2">SE2</option>
-    <option value="SE3">SE3</option>
-    <option value="SE4">SE4</option>
+  <label for="data_source" class="form-label">Data Source:</label>
+  <select id="data_source" name="data_source" class="form-input">
+    <option value="auto">Auto (Recommended)</option>
+    <option value="swedish">Swedish API Only</option>
+    <option value="entsoe">ENTSO-E API Only</option>
   </select>
+  <small class="form-help">
+    Auto uses Swedish API for SE zones and ENTSO-E for other countries.
+    Swedish API requires no key. ENTSO-E covers 25+ countries but requires an API key.
+  </small>
+</div>
+
+<div class="form-group nowrap">
+  <label for="zone" class="form-label">Country/Zone:</label>
+  <select id="zone" name="zone" class="form-input">
+    <optgroup label="Sweden">
+      <option value="SE1">SE1 - Northern Sweden (Luleå)</option>
+      <option value="SE2">SE2 - Central Sweden (Sundsvall)</option>
+      <option value="SE3">SE3 - Southern Sweden (Malmö)</option>
+      <option value="SE4" selected>SE4 - Stockholm/Malmö</option>
+    </optgroup>
+    <optgroup label="Norway">
+      <option value="NO1">NO1 - Oslo Area</option>
+      <option value="NO2">NO2 - Kristiansand</option>
+      <option value="NO3">NO3 - Trondheim</option>
+      <option value="NO4">NO4 - Tromsø</option>
+      <option value="NO5">NO5 - Bergen</option>
+    </optgroup>
+    <optgroup label="Denmark">
+      <option value="DK1">DK1 - Western Denmark</option>
+      <option value="DK2">DK2 - Eastern Denmark</option>
+    </optgroup>
+    <optgroup label="Finland">
+      <option value="FI">FI - Finland</option>
+    </optgroup>
+    <optgroup label="Central Europe">
+      <option value="DE">DE - Germany</option>
+      <option value="NL">NL - Netherlands</option>
+      <option value="BE">BE - Belgium</option>
+      <option value="FR">FR - France</option>
+      <option value="AT">AT - Austria</option>
+      <option value="CH">CH - Switzerland</option>
+      <option value="PL">PL - Poland</option>
+    </optgroup>
+    <optgroup label="Southern Europe">
+      <option value="ES">ES - Spain</option>
+      <option value="PT">PT - Portugal</option>
+      <option value="IT">IT - Italy</option>
+    </optgroup>
+    <optgroup label="UK & Ireland">
+      <option value="GB">GB - United Kingdom</option>
+      <option value="IE">IE - Ireland</option>
+    </optgroup>
+    <optgroup label="Baltic States">
+      <option value="EE">EE - Estonia</option>
+      <option value="LV">LV - Latvia</option>
+      <option value="LT">LT - Lithuania</option>
+    </optgroup>
+    <optgroup label="Eastern Europe">
+      <option value="CZ">CZ - Czech Republic</option>
+      <option value="SK">SK - Slovakia</option>
+      <option value="HU">HU - Hungary</option>
+      <option value="RO">RO - Romania</option>
+      <option value="BG">BG - Bulgaria</option>
+      <option value="GR">GR - Greece</option>
+      <option value="HR">HR - Croatia</option>
+      <option value="SI">SI - Slovenia</option>
+    </optgroup>
+  </select>
+</div>
+
+<div class="form-group">
+  <label for="show_max_label" class="form-label">Show highest price label:</label>
+  <select id="show_max_label" name="show_max_label" class="form-input">
+    <option value="true">Yes</option>
+    <option value="false">No</option>
+  </select>
+</div>
+
+<!-- ENTSO-E API Key - shown only when needed -->
+<div class="form-group" id="api_key_group" style="display: none;">
+  <label for="entsoe_api_key" class="form-label">ENTSO-E API Key:</label>
+  <input type="password" id="entsoe_api_key" name="entsoe_api_key" 
+         class="form-input" 
+         placeholder="Get free API key from transparency.entsoe.eu">
+  <small class="form-help">
+    <a href="https://transparency.entsoe.eu/" target="_blank" rel="noopener noreferrer">
+      Get API Key (Free Registration Required)
+    </a>
+  </small>
+</div>
+
+<!-- Exchange Rate for SEK conversion (optional) -->
+<div class="form-group" id="exchange_rate_group" style="display: none;">
+  <label for="exchange_rate_sek" class="form-label">SEK/EUR Exchange Rate:</label>
+  <input type="number" id="exchange_rate_sek" name="exchange_rate_sek" 
+         class="form-input" step="0.0001" min="0" value="11.0"
+         placeholder="e.g., 11.0">
+  <small class="form-help">
+    Used when converting ENTSO-E prices (EUR) to SEK. Default is 11.0.
+  </small>
 </div>
 
 <script>
   document.addEventListener("DOMContentLoaded", () => {
-    if (loadPluginSettings) {
-      document.getElementById("zone").value = pluginSettings.zone || "SE1";
+    const dataSourceSelect = document.getElementById("data_source");
+    const apiKeyGroup = document.getElementById("api_key_group");
+    const exchangeRateGroup = document.getElementById("exchange_rate_group");
+    const zoneSelect = document.getElementById("zone");
+    
+    if (!dataSourceSelect || !apiKeyGroup || !zoneSelect) {
+      return;
     }
+    
+    // Function to update UI based on data source selection
+    function updateDataSourceUI() {
+      const dataSource = dataSourceSelect.value;
+      const zone = zoneSelect.value;
+      
+      // Show/hide API key field
+      // Show when: entsoe mode, OR auto mode with non-Swedish zone
+      const isSwedishZone = zone.startsWith("SE");
+      const needsApiKey = (dataSource === "entsoe") || 
+                         (dataSource === "auto" && !isSwedishZone);
+      apiKeyGroup.style.display = needsApiKey ? "block" : "none";
+      
+      // Show exchange rate when using ENTSO-E (for SEK conversion)
+      const usesEntsoe = (dataSource === "entsoe") || 
+                        (dataSource === "auto" && !isSwedishZone);
+      exchangeRateGroup.style.display = usesEntsoe ? "block" : "none";
+    }
+    
+    // Update when data source changes
+    dataSourceSelect.addEventListener("change", updateDataSourceUI);
+    
+    // Update when zone changes
+    zoneSelect.addEventListener("change", updateDataSourceUI);
+    
+    // Initialize based on current values
+    if (loadPluginSettings) {
+      dataSourceSelect.value = pluginSettings.data_source || "auto";
+      zoneSelect.value = pluginSettings.zone || "SE4";
+      document.getElementById("show_max_label").value = 
+        pluginSettings.show_max_label !== false ? "true" : "false";
+      document.getElementById("entsoe_api_key").value = 
+        pluginSettings.entsoe_api_key || "";
+      document.getElementById("exchange_rate_sek").value = 
+        pluginSettings.exchange_rate_sek || "11.0";
+    }
+    
+    // Update UI based on initial values
+    updateDataSourceUI();
   });
 </script>
