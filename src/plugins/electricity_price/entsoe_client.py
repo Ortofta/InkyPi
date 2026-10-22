@@ -8,10 +8,14 @@ Transparency Platform API.
 API Documentation: https://transparency.entsoe.eu/transparency-platform/access-to-data/api-urls-and-guidelines
 """
 
+import hashlib
+import json
 import logging
 import os
+import time
 from datetime import datetime, timedelta
-from typing import Optional, List, Dict, Any
+from pathlib import Path
+from typing import Optional, List, Dict, Any, Callable
 from dataclasses import dataclass
 
 import requests
@@ -37,6 +41,171 @@ class ENTSOEEClientError(Exception):
     pass
 
 
+class Cache:
+    """
+    Simple cache with TTL support for ENTSO-E API responses.
+    
+    Supports both in-memory and file-based caching.
+    """
+    
+    def __init__(self, cache_dir: Optional[Path] = None, default_ttl: int = 3600):
+        """
+        Initialize cache.
+        
+        Args:
+            cache_dir: Directory for file-based cache (None = memory only)
+            default_ttl: Default time-to-live in seconds (1 hour default)
+        """
+        self.cache_dir = cache_dir
+        self.default_ttl = default_ttl
+        self._memory_cache: Dict[str, Dict[str, Any]] = {}
+        
+        if self.cache_dir and not self.cache_dir.exists():
+            self.cache_dir.mkdir(parents=True, exist_ok=True)
+    
+    def _make_key(self, country_zone: str, date: datetime.date) -> str:
+        """Generate a cache key for the given country/zone and date."""
+        return f"{country_zone}_{date.isoformat()}"
+    
+    def _get_cache_path(self, key: str) -> Path:
+        """Get file path for a cache key."""
+        if self.cache_dir:
+            key_hash = hashlib.sha256(key.encode()).hexdigest()[:16]
+            return self.cache_dir / f"entsoe_{key_hash}.json"
+        return None
+    
+    def get(self, country_zone: str, date: datetime.date) -> Optional[List[ENTSOEPriceEntry]]:
+        """
+        Get cached data if it exists and hasn't expired.
+        
+        Args:
+            country_zone: Country/zone code
+            date: Date of the data
+            
+        Returns:
+            Cached price entries or None if not found/expired
+        """
+        key = self._make_key(country_zone, date)
+        
+        # Try memory cache first
+        if key in self._memory_cache:
+            entry = self._memory_cache[key]
+            expires_at = entry["expires_at"]
+            if isinstance(expires_at, str):
+                expires_at = datetime.fromisoformat(expires_at)
+            if datetime.now() < expires_at:
+                return [ENTSOEPriceEntry(**data) for data in entry["data"]]
+            else:
+                # Expired, remove from memory
+                del self._memory_cache[key]
+        
+        # Try file cache
+        cache_path = self._get_cache_path(key)
+        if cache_path and cache_path.exists():
+            try:
+                with open(cache_path, 'r') as f:
+                    entry = json.load(f)
+                
+                if datetime.fromisoformat(entry["expires_at"]) > datetime.now():
+                    # Valid, load into memory cache
+                    self._memory_cache[key] = entry
+                    return [ENTSOEPriceEntry(**data) for data in entry["data"]]
+                else:
+                    # Expired, remove file
+                    cache_path.unlink()
+            except (json.JSONDecodeError, KeyError, ValueError) as e:
+                logger.warning(f"Failed to read cache file {cache_path}: {e}")
+        
+        return None
+    
+    def set(
+        self,
+        country_zone: str,
+        date: datetime.date,
+        data: List[ENTSOEPriceEntry],
+        ttl: Optional[int] = None
+    ) -> None:
+        """
+        Store data in cache.
+        
+        Args:
+            country_zone: Country/zone code
+            date: Date of the data
+            data: Price entries to cache
+            ttl: Time-to-live in seconds (uses default if None)
+        """
+        key = self._make_key(country_zone, date)
+        ttl = ttl or self.default_ttl
+        expires_at = datetime.now() + timedelta(seconds=ttl)
+        
+        entry = {
+            "data": [asdict(d) for d in data],
+            "expires_at": expires_at.isoformat(),
+            "country_zone": country_zone,
+            "date": date.isoformat()
+        }
+        
+        # Store in memory
+        self._memory_cache[key] = entry
+        
+        # Store in file if cache_dir is set
+        cache_path = self._get_cache_path(key)
+        if cache_path:
+            try:
+                with open(cache_path, 'w') as f:
+                    json.dump(entry, f, indent=2)
+                logger.debug(f"Cached data for {country_zone} on {date} to {cache_path}")
+            except OSError as e:
+                logger.warning(f"Failed to write cache file {cache_path}: {e}")
+    
+    def clear(self) -> None:
+        """Clear all cached data."""
+        self._memory_cache.clear()
+        
+        if self.cache_dir and self.cache_dir.exists():
+            for cache_file in self.cache_dir.glob("entsoe_*.json"):
+                try:
+                    cache_file.unlink()
+                except OSError as e:
+                    logger.warning(f"Failed to remove cache file {cache_file}: {e}")
+    
+    def cleanup_expired(self) -> None:
+        """Remove expired cache entries from memory and disk."""
+        now = datetime.now()
+        
+        # Clean memory cache
+        expired_keys = [
+            key for key, entry in self._memory_cache.items()
+            if datetime.fromisoformat(entry["expires_at"]) < now
+        ]
+        for key in expired_keys:
+            del self._memory_cache[key]
+        
+        # Clean file cache
+        if self.cache_dir and self.cache_dir.exists():
+            for cache_file in self.cache_dir.glob("entsoe_*.json"):
+                try:
+                    with open(cache_file, 'r') as f:
+                        entry = json.load(f)
+                    if datetime.fromisoformat(entry["expires_at"]) < now:
+                        cache_file.unlink()
+                except (json.JSONDecodeError, KeyError, ValueError, OSError) as e:
+                    logger.debug(f"Failed to check/remove expired cache {cache_file}: {e}")
+
+
+def asdict(obj):
+    """Convert dataclass instance to dict."""
+    if hasattr(obj, '__dataclass_fields__'):
+        return {k: asdict(v) if hasattr(v, '__dataclass_fields__') else v 
+                for k, v in obj.__dict__.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [asdict(item) for item in obj]
+    elif isinstance(obj, dict):
+        return {k: asdict(v) for k, v in obj.items()}
+    else:
+        return obj
+
+
 class ENTSOEEClient:
     """
     Client for the ENTSO-E Transparency Platform API.
@@ -44,26 +213,51 @@ class ENTSOEEClient:
     This client fetches day-ahead electricity prices for various European countries.
     Requires an API key from https://transparency.entsoe.eu/
     
+    Features:
+    - Dual caching (in-memory and file-based)
+    - Automatic retry with exponential backoff
+    - Data normalization to plugin format
+    
     Example:
         client = ENTSOEEClient(api_key="your-api-key")
         prices = client.get_day_ahead_prices("SE4", datetime.date(2026, 10, 19))
+        
+        # With caching
+        client = ENTSOEEClient(api_key="your-api-key", cache_dir=Path(".cache"))
+        
+        # With retry
+        client = ENTSOEEClient(api_key="your-api-key", max_retries=3)
     """
     
     BASE_URL = "https://web-api.tp.entsoe.eu/api"
     
-    # Default timeout in seconds
+    # Default settings
     DEFAULT_TIMEOUT = 30
+    DEFAULT_MAX_RETRIES = 3
+    DEFAULT_RETRY_BACKOFF = 1.0  # Exponential backoff multiplier
+    DEFAULT_CACHE_TTL = 3600  # 1 hour in seconds
     
     # User agent for API requests
     USER_AGENT = "InkyPi-ElectricityPricePlugin/1.0"
     
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        cache_dir: Optional[Path] = None,
+        cache_ttl: int = DEFAULT_CACHE_TTL,
+        max_retries: int = DEFAULT_MAX_RETRIES,
+        retry_backoff: float = DEFAULT_RETRY_BACKOFF
+    ):
         """
         Initialize the ENTSO-E client.
         
         Args:
             api_key: ENTSO-E API key. If not provided, will attempt to read
                     from ENTSOE_API_KEY environment variable.
+            cache_dir: Directory for file-based cache (None = memory only)
+            cache_ttl: Cache time-to-live in seconds
+            max_retries: Maximum number of retry attempts
+            retry_backoff: Exponential backoff multiplier
         """
         # Try to get API key from parameter, then environment, then fail
         self.api_key = api_key or os.getenv('ENTSOE_API_KEY')
@@ -79,6 +273,13 @@ class ENTSOEEClient:
         self.session.headers.update({
             "User-Agent": self.USER_AGENT,
         })
+        
+        self.max_retries = max_retries
+        self.retry_backoff = retry_backoff
+        self.cache_ttl = cache_ttl
+        
+        # Initialize cache
+        self.cache = Cache(cache_dir=cache_dir, default_ttl=cache_ttl)
     
     def _get_headers(self) -> Dict[str, str]:
         """Get headers for API requests including API key."""
@@ -87,11 +288,87 @@ class ENTSOEEClient:
             "X-Request-ID": self.api_key,
         }
     
+    def _retry_request(
+        self,
+        func: Callable[[], requests.Response],
+        max_retries: int,
+        backoff: float
+    ) -> requests.Response:
+        """
+        Execute a request with retry logic and exponential backoff.
+        
+        Args:
+            func: Function that returns a requests.Response
+            max_retries: Maximum number of retry attempts
+            backoff: Exponential backoff multiplier
+            
+        Returns:
+            requests.Response object
+            
+        Raises:
+            ENTSOEEClientError: If all retries fail
+        """
+        last_exception = None
+        
+        for attempt in range(max_retries + 1):
+            try:
+                response = func()
+                
+                # Check for rate limiting (HTTP 429)
+                if response.status_code == 429:
+                    retry_after = int(response.headers.get('Retry-After', 10))
+                    if attempt < max_retries:
+                        logger.warning(
+                            f"Rate limited. Retrying after {retry_after} seconds (attempt {attempt + 1}/{max_retries + 1})"
+                        )
+                        time.sleep(retry_after)
+                        continue
+                
+                # Check for other retryable errors (5xx)
+                if response.status_code >= 500 and attempt < max_retries:
+                    delay = backoff * (2 ** attempt)
+                    logger.warning(
+                        f"Server error {response.status_code}. Retrying in {delay:.1f}s (attempt {attempt + 1}/{max_retries + 1})"
+                    )
+                    time.sleep(delay)
+                    continue
+                
+                response.raise_for_status()
+                return response
+                
+            except requests.exceptions.Timeout as e:
+                last_exception = e
+                if attempt < max_retries:
+                    delay = backoff * (2 ** attempt)
+                    logger.warning(
+                        f"Timeout. Retrying in {delay:.1f}s (attempt {attempt + 1}/{max_retries + 1})"
+                    )
+                    time.sleep(delay)
+                    continue
+                else:
+                    raise ENTSOEEClientError(f"Request timed out after {max_retries + 1} attempts: {e}")
+                    
+            except requests.exceptions.ConnectionError as e:
+                last_exception = e
+                if attempt < max_retries:
+                    delay = backoff * (2 ** attempt)
+                    logger.warning(
+                        f"Connection error. Retrying in {delay:.1f}s (attempt {attempt + 1}/{max_retries + 1})"
+                    )
+                    time.sleep(delay)
+                    continue
+                else:
+                    raise ENTSOEEClientError(f"Connection error after {max_retries + 1} attempts: {e}")
+        
+        # This should not be reached, but just in case
+        raise ENTSOEEClientError(f"Request failed after {max_retries + 1} attempts: {last_exception}")
+    
     def get_day_ahead_prices(
         self,
         country_zone: str,
         date: datetime.date,
-        currency: str = "EUR"
+        currency: str = "EUR",
+        use_cache: bool = True
     ) -> List[ENTSOEPriceEntry]:
         """
         Fetch day-ahead electricity prices for a specific country/zone.
@@ -100,6 +377,7 @@ class ENTSOEEClient:
             country_zone: Country/zone code (e.g., "SE4", "NO1", "DE")
             date: Date for which to fetch prices
             currency: Currency for prices (default: "EUR")
+            use_cache: Whether to use cached data if available (default: True)
             
         Returns:
             List of ENTSOEPriceEntry objects with raw price data
@@ -116,6 +394,13 @@ class ENTSOEEClient:
                 f"Valid codes: {valid_countries}"
             )
         
+        # Check cache first
+        if use_cache:
+            cached_data = self.cache.get(country_zone, date)
+            if cached_data is not None:
+                logger.info(f"Using cached data for {country_zone} on {date}")
+                return cached_data
+        
         # Get EIC code for the country/zone
         eic_code = get_eic_code(country_zone)
         if not eic_code:
@@ -131,22 +416,29 @@ class ENTSOEEClient:
             "periodEnd": date.strftime("%Y%m%d2359"),
         }
         
-        # Add currency if not EUR (default)
-        # Note: Currency parameter support varies by endpoint
-        
         logger.info(f"Fetching day-ahead prices for {country_zone} on {date}")
         
         try:
-            response = self.session.get(
-                self.BASE_URL,
-                params=params,
-                headers=self._get_headers(),
-                timeout=self.DEFAULT_TIMEOUT
+            # Use retry logic
+            response = self._retry_request(
+                func=lambda: self.session.get(
+                    self.BASE_URL,
+                    params=params,
+                    headers=self._get_headers(),
+                    timeout=self.DEFAULT_TIMEOUT
+                ),
+                max_retries=self.max_retries,
+                backoff=self.retry_backoff
             )
-            response.raise_for_status()
             
             # Parse XML response
-            return self._parse_day_ahead_response(response.text, currency)
+            prices = self._parse_day_ahead_response(response.text, currency)
+            
+            # Cache the result
+            if use_cache and prices:
+                self.cache.set(country_zone, date, prices, self.cache_ttl)
+            
+            return prices
             
         except requests.exceptions.Timeout:
             raise ENTSOEEClientError(
@@ -191,12 +483,12 @@ class ENTSOEEClient:
         # Helper function to find elements with or without namespace
         def find_element(parent, tag_name):
             """Find element by tag name, trying both with and without namespace."""
-            # Try without namespace first (works if no namespace or if we stripped it)
+            # Try without namespace first
             elem = parent.find(tag_name)
             if elem is not None:
                 return elem
             
-            # Try with namespace
+            # Try with known namespace
             ns = 'urn:iec62325.351:tc57wg16:451-6:glmarketdocument:1:0'
             elem = parent.find(f'{{{ns}}}{tag_name}')
             if elem is not None:
@@ -216,18 +508,18 @@ class ENTSOEEClient:
             # Try without namespace
             results.extend(parent.findall(tag_name))
             
-            # Try with namespace
+            # Try with known namespace
             ns = 'urn:iec62325.351:tc57wg16:451-6:glmarketdocument:1:0'
             results.extend(parent.findall(f'{{{ns}}}{tag_name}'))
             
-            # Try any namespace
+            # Try any namespace recursively
             for child in parent:
                 if child.tag.endswith(tag_name):
                     results.append(child)
                 results.extend(find_all_elements(child, tag_name))
             
             # Deduplicate
-            return list(set(results))
+            return list({id(e): e for e in results}.values())
         
         # Find all TimeSeries elements
         time_series_list = find_all_elements(root, 'TimeSeries')
@@ -286,11 +578,8 @@ class ENTSOEEClient:
                 for point in point_list:
                     price_elem = find_element(point, 'price.amount')
                     if price_elem is None:
-                        # Try price.amount with different case
-                        price_elem = find_element(point, 'price.amount')
-                        if price_elem is None:
-                            # Try just amount
-                            price_elem = find_element(point, 'amount')
+                        # Try just amount
+                        price_elem = find_element(point, 'amount')
                     
                     if price_elem is None:
                         continue
@@ -352,7 +641,6 @@ class ENTSOEEClient:
         
         for entry in entsoe_prices:
             # Convert EUR/MWh to EUR/kWh (divide by 1000)
-            # Note: ENTSO-E returns prices in EUR/MWh
             price_eur_per_kwh = entry.price_eur_per_mwh / 1000.0
             
             # Build base result
@@ -368,7 +656,6 @@ class ENTSOEEClient:
                 plugin_entry["EXR"] = exchange_rate_sek
             else:
                 # If no exchange rate, we can't provide SEK price
-                # But we should still provide EUR price
                 plugin_entry["SEK_per_kWh"] = None
                 plugin_entry["EXR"] = None
             
@@ -376,8 +663,17 @@ class ENTSOEEClient:
         
         return result
     
+    def clear_cache(self) -> None:
+        """Clear all cached data."""
+        self.cache.clear()
+    
+    def cleanup_cache(self) -> None:
+        """Remove expired cache entries."""
+        self.cache.cleanup_expired()
+    
     def close(self):
         """Close the client and clean up resources."""
+        self.cleanup_cache()
         if self.session:
             self.session.close()
             self.session = None

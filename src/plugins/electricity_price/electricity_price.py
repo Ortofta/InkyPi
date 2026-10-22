@@ -256,8 +256,8 @@ class ElectricityPrice(BasePlugin):
                 "and configure it in plugin settings or ENTSOE_API_KEY environment variable."
             )
         
-        # Get exchange rate from settings or use default
-        exchange_rate = settings.get("exchange_rate_sek", self.DEFAULT_EXCHANGE_RATE_SEK)
+        # Get exchange rate
+        exchange_rate = self._get_exchange_rate(zone, settings)
         
         # Fetch raw prices from ENTSO-E
         import datetime as dt
@@ -283,6 +283,39 @@ class ElectricityPrice(BasePlugin):
             ))
         
         return result
+    
+    def _get_exchange_rate(self, zone: str, settings: Dict[str, Any]) -> float:
+        """
+        Get exchange rate for SEK conversion.
+        
+        Args:
+            zone: Country/zone code
+            settings: Plugin settings
+            
+        Returns:
+            Exchange rate (SEK per EUR)
+        """
+        # Check if user provided a specific exchange rate
+        if settings.get("exchange_rate_sek"):
+            return float(settings["exchange_rate_sek"])
+        
+        # Try to get from environment
+        env_rate = os.getenv("EXCHANGE_RATE_SEK")
+        if env_rate:
+            try:
+                return float(env_rate)
+            except ValueError:
+                pass
+        
+        # Try to fetch from exchange rate API
+        try:
+            from .exchange_rate import get_rate
+            return get_rate("EUR", "SEK")
+        except Exception as e:
+            logger.warning(f"Failed to fetch exchange rate: {e}, using default")
+        
+        # Use default
+        return self.DEFAULT_EXCHANGE_RATE_SEK
 
     def fetch_json(self, zone: str = "SE4") -> List[ElectricityPriceEntry]:
         """

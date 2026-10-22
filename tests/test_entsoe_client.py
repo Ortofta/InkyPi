@@ -409,6 +409,233 @@ class TestENTSOEEClientMockAPI(TestCase):
         client.close()
 
 
+class TestENTSOEEClientRetry(TestCase):
+    """Test ENTSO-E client retry logic."""
+    
+    @patch('requests.Session.get')
+    @patch('time.sleep')
+    def test_retry_on_server_error(self, mock_sleep, mock_get):
+        """Test retry on 5xx server errors."""
+        # First call returns 500, second call succeeds
+        mock_response_500 = MagicMock()
+        mock_response_500.status_code = 500
+        mock_response_500.raise_for_status.side_effect = requests.exceptions.HTTPError("Server Error")
+        mock_response_500.headers = {}
+        
+        mock_response_200 = MagicMock()
+        mock_response_200.status_code = 200
+        mock_response_200.text = """<?xml version="1.0"?>
+        <glMarketDocument>
+            <TimeSeries>
+                <currency_Unit.name>EUR</currency_Unit.name>
+                <Periode>
+                    <timeInterval>
+                        <start>2026-10-19T00:00:00Z</start>
+                        <end>2026-10-19T01:00:00Z</end>
+                    </timeInterval>
+                    <Point><price.amount>42.50</price.amount></Point>
+                </Periode>
+            </TimeSeries>
+        </glMarketDocument>"""
+        
+        mock_get.side_effect = [mock_response_500, mock_response_200]
+        
+        client = ENTSOEEClient(api_key="test-key", max_retries=3, retry_backoff=0.1)
+        prices = client.get_day_ahead_prices("SE4", date(2026, 10, 19))
+        
+        # Should have retried and succeeded
+        self.assertEqual(len(prices), 1)
+        self.assertTrue(mock_sleep.called)
+        
+        client.close()
+    
+    @patch('requests.Session.get')
+    @patch('time.sleep')
+    def test_retry_on_timeout(self, mock_sleep, mock_get):
+        """Test retry on timeout."""
+        mock_get.side_effect = [
+            requests.exceptions.Timeout("Timeout 1"),
+            requests.exceptions.Timeout("Timeout 2"),
+            MagicMock(status_code=200, text="""<?xml version="1.0"?>
+            <glMarketDocument>
+                <TimeSeries>
+                    <currency_Unit.name>EUR</currency_Unit.name>
+                    <Periode>
+                        <timeInterval>
+                            <start>2026-10-19T00:00:00Z</start>
+                            <end>2026-10-19T01:00:00Z</end>
+                        </timeInterval>
+                        <Point><price.amount>42.50</price.amount></Point>
+                    </Periode>
+                </TimeSeries>
+            </glMarketDocument>""")
+        ]
+        
+        client = ENTSOEEClient(api_key="test-key", max_retries=3, retry_backoff=0.01)
+        prices = client.get_day_ahead_prices("SE4", date(2026, 10, 19))
+        
+        self.assertEqual(len(prices), 1)
+        self.assertEqual(mock_get.call_count, 3)
+        
+        client.close()
+    
+    @patch('requests.Session.get')
+    def test_no_retry_on_404(self, mock_get):
+        """Test that 404 errors are not retried."""
+        mock_response = MagicMock()
+        mock_response.status_code = 404
+        mock_response.raise_for_status.side_effect = requests.exceptions.HTTPError("Not Found")
+        mock_response.headers = {}
+        mock_get.return_value = mock_response
+        
+        client = ENTSOEEClient(api_key="test-key", max_retries=3)
+        
+        with self.assertRaises(ENTSOEEClientError):
+            client.get_day_ahead_prices("SE4", date(2026, 10, 19))
+        
+        # Should only try once (no retries for 4xx errors except 429)
+        self.assertEqual(mock_get.call_count, 1)
+        
+        client.close()
+    
+    @patch('requests.Session.get')
+    @patch('time.sleep')
+    def test_retry_on_rate_limit(self, mock_sleep, mock_get):
+        """Test retry on rate limiting (429)."""
+        mock_response_429 = MagicMock()
+        mock_response_429.status_code = 429
+        mock_response_429.headers = {'Retry-After': '5'}
+        mock_response_429.raise_for_status.side_effect = requests.exceptions.HTTPError("Rate Limited")
+        
+        mock_response_200 = MagicMock()
+        mock_response_200.status_code = 200
+        mock_response_200.text = """<?xml version="1.0"?>
+        <glMarketDocument>
+            <TimeSeries>
+                <currency_Unit.name>EUR</currency_Unit.name>
+                <Periode>
+                    <timeInterval>
+                        <start>2026-10-19T00:00:00Z</start>
+                        <end>2026-10-19T01:00:00Z</end>
+                    </timeInterval>
+                    <Point><price.amount>42.50</price.amount></Point>
+                </Periode>
+            </TimeSeries>
+        </glMarketDocument>"""
+        
+        mock_get.side_effect = [mock_response_429, mock_response_200]
+        
+        client = ENTSOEEClient(api_key="test-key", max_retries=3)
+        prices = client.get_day_ahead_prices("SE4", date(2026, 10, 19))
+        
+        self.assertEqual(len(prices), 1)
+        self.assertTrue(mock_sleep.called)
+        # Should sleep for 5 seconds (from Retry-After header)
+        mock_sleep.assert_called_with(5)
+        
+        client.close()
+
+
+class TestENTSOEEClientCache(TestCase):
+    """Test ENTSO-E client caching."""
+    
+    @patch('requests.Session.get')
+    def test_cache_hit(self, mock_get):
+        """Test that cached data is returned on second call."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = """<?xml version="1.0"?>
+        <glMarketDocument>
+            <TimeSeries>
+                <currency_Unit.name>EUR</currency_Unit.name>
+                <Periode>
+                    <timeInterval>
+                        <start>2026-10-19T00:00:00Z</start>
+                        <end>2026-10-19T01:00:00Z</end>
+                    </timeInterval>
+                    <Point><price.amount>42.50</price.amount></Point>
+                </Periode>
+            </TimeSeries>
+        </glMarketDocument>"""
+        mock_get.return_value = mock_response
+        
+        client = ENTSOEEClient(api_key="test-key", cache_ttl=3600)
+        
+        # First call - should hit API
+        prices1 = client.get_day_ahead_prices("SE4", date(2026, 10, 19))
+        self.assertEqual(mock_get.call_count, 1)
+        
+        # Second call - should use cache
+        prices2 = client.get_day_ahead_prices("SE4", date(2026, 10, 19))
+        self.assertEqual(mock_get.call_count, 1)  # Still 1, not 2
+        
+        # Data should be the same
+        self.assertEqual(len(prices1), len(prices2))
+        self.assertEqual(prices1[0].price_eur_per_mwh, prices2[0].price_eur_per_mwh)
+        
+        client.close()
+    
+    @patch('requests.Session.get')
+    def test_cache_bypass(self, mock_get):
+        """Test that cache can be bypassed."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = """<?xml version="1.0"?>
+        <glMarketDocument>
+            <TimeSeries>
+                <currency_Unit.name>EUR</currency_Unit.name>
+                <Periode>
+                    <timeInterval>
+                        <start>2026-10-19T00:00:00Z</start>
+                        <end>2026-10-19T01:00:00Z</end>
+                    </timeInterval>
+                    <Point><price.amount>42.50</price.amount></Point>
+                </Periode>
+            </TimeSeries>
+        </glMarketDocument>"""
+        mock_get.return_value = mock_response
+        
+        client = ENTSOEEClient(api_key="test-key", cache_ttl=3600)
+        
+        # First call - should hit API
+        client.get_day_ahead_prices("SE4", date(2026, 10, 19))
+        self.assertEqual(mock_get.call_count, 1)
+        
+        # Second call with use_cache=False - should bypass cache
+        client.get_day_ahead_prices("SE4", date(2026, 10, 19), use_cache=False)
+        self.assertEqual(mock_get.call_count, 2)
+        
+        client.close()
+    
+    def test_cache_clear(self):
+        """Test cache clearing."""
+        client = ENTSOEEClient(api_key="test-key")
+        
+        # Add something to cache
+        from plugins.electricity_price.entsoe_client import ENTSOEPriceEntry
+        test_entry = ENTSOEPriceEntry(
+            price_eur_per_mwh=42.50,
+            start=datetime(2026, 10, 19, 0, 0),
+            end=datetime(2026, 10, 19, 1, 0),
+            currency="EUR",
+            unit="MWH"
+        )
+        client.cache.set("SE4", date(2026, 10, 19), [test_entry])
+        
+        # Verify it's cached
+        cached = client.cache.get("SE4", date(2026, 10, 19))
+        self.assertIsNotNone(cached)
+        
+        # Clear cache
+        client.clear_cache()
+        
+        # Verify it's gone
+        cached = client.cache.get("SE4", date(2026, 10, 19))
+        self.assertIsNone(cached)
+        
+        client.close()
+
+
 if __name__ == '__main__':
     import unittest
     unittest.main()
