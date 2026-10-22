@@ -407,13 +407,15 @@ class ENTSOEEClient:
             raise ENTSOEEClientError(f"No EIC code found for: {country_zone}")
         
         # Build API parameters
+        # ENTSO-E API requires securityToken as a query parameter
         params = {
             "documentType": "A44",  # Aggregated data
-            "processType": "A16",   # Day-ahead prices
+            "processType": "A01",   # Day-ahead prices
             "in_Domain": eic_code,
             "out_Domain": eic_code,
             "periodStart": date.strftime("%Y%m%d0000"),
             "periodEnd": date.strftime("%Y%m%d2359"),
+            "securityToken": self.api_key,  # ENTSO-E requires this as query param
         }
         
         logger.info(f"Fetching day-ahead prices for {country_zone} on {date}")
