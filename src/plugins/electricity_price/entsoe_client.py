@@ -363,21 +363,105 @@ class ENTSOEEClient:
         # This should not be reached, but just in case
         raise ENTSOEEClientError(f"Request failed after {max_retries + 1} attempts: {last_exception}")
     
+    def _fetch_prices_for_date(
+        self,
+        country_zone: str,
+        date: datetime.date,
+        process_type: str,
+        currency: str = "EUR",
+        use_cache: bool = True
+    ) -> List[ENTSOEPriceEntry]:
+        """
+        Internal method to fetch prices for a specific date and process type.
+        
+        Args:
+            country_zone: Country/zone code
+            date: Date for which to fetch prices
+            process_type: ENTSO-E process type (e.g., A01 for day-ahead, A03 for intraday)
+            currency: Currency for prices
+            use_cache: Whether to use cached data
+            
+        Returns:
+            List of ENTSOEPriceEntry objects
+        """
+        eic_code = get_eic_code(country_zone)
+        if not eic_code:
+            raise ENTSOEEClientError(f"No EIC code found for: {country_zone}")
+        
+        # Build API parameters
+        params = {
+            "documentType": "A44",  # Aggregated data
+            "processType": process_type,
+            "in_Domain": eic_code,
+            "out_Domain": eic_code,
+            "periodStart": date.strftime("%Y%m%d0000"),
+            "periodEnd": date.strftime("%Y%m%d2359"),
+            "securityToken": self.api_key,
+        }
+        
+        logger.info(f"Fetching {process_type} prices for {country_zone} on {date}")
+        
+        try:
+            response = self._retry_request(
+                func=lambda: self.session.get(
+                    self.BASE_URL,
+                    params=params,
+                    headers=self._get_headers(),
+                    timeout=self.DEFAULT_TIMEOUT
+                ),
+                max_retries=self.max_retries,
+                backoff=self.retry_backoff
+            )
+            
+            prices = self._parse_day_ahead_response(response.text, currency)
+            
+            # Cache the result only if we got data
+            if use_cache and prices:
+                self.cache.set(country_zone, date, prices, self.cache_ttl)
+            
+            return prices
+            
+        except requests.exceptions.Timeout:
+            raise ENTSOEEClientError(
+                f"Request timed out for {country_zone} on {date}"
+            )
+        except requests.exceptions.ConnectionError as e:
+            raise ENTSOEEClientError(
+                f"Connection error fetching data for {country_zone} on {date}: {e}"
+            )
+        except requests.exceptions.HTTPError as e:
+            status_code = getattr(e.response, 'status_code', 'unknown')
+            raise ENTSOEEClientError(
+                f"HTTP error {status_code} for {country_zone} on {date}: {e}"
+            )
+        except Exception as e:
+            raise ENTSOEEClientError(
+                f"Unexpected error fetching data for {country_zone} on {date}: {e}"
+            )
+    
     def get_day_ahead_prices(
         self,
         country_zone: str,
         date: datetime.date,
         currency: str = "EUR",
-        use_cache: bool = True
+        use_cache: bool = True,
+        max_retry_days: int = 7
     ) -> List[ENTSOEPriceEntry]:
         """
         Fetch day-ahead electricity prices for a specific country/zone.
+        
+        This method tries multiple strategies to get prices:
+        1. Day-ahead prices for the requested date
+        2. Intraday prices for the requested date (same-day)
+        3. Day-ahead prices for tomorrow (published today)
+        4. If still no data, tries previous days up to max_retry_days
         
         Args:
             country_zone: Country/zone code (e.g., "SE4", "NO1", "DE")
             date: Date for which to fetch prices
             currency: Currency for prices (default: "EUR")
             use_cache: Whether to use cached data if available (default: True)
+            max_retry_days: Maximum number of previous days to try (default: 7)
             
         Returns:
             List of ENTSOEPriceEntry objects with raw price data
@@ -401,64 +485,68 @@ class ENTSOEEClient:
                 logger.info(f"Using cached data for {country_zone} on {date}")
                 return cached_data
         
-        # Get EIC code for the country/zone
-        eic_code = get_eic_code(country_zone)
-        if not eic_code:
-            raise ENTSOEEClientError(f"No EIC code found for: {country_zone}")
-        
-        # Build API parameters
-        # ENTSO-E API requires securityToken as a query parameter
-        params = {
-            "documentType": "A44",  # Aggregated data
-            "processType": "A01",   # Day-ahead prices
-            "in_Domain": eic_code,
-            "out_Domain": eic_code,
-            "periodStart": date.strftime("%Y%m%d0000"),
-            "periodEnd": date.strftime("%Y%m%d2359"),
-            "securityToken": self.api_key,  # ENTSO-E requires this as query param
-        }
-        
-        logger.info(f"Fetching day-ahead prices for {country_zone} on {date}")
-        
+        # Strategy 1: Try day-ahead prices for the requested date
+        logger.info(f"Strategy 1: Trying day-ahead (A01) for {country_zone} on {date}")
         try:
-            # Use retry logic
-            response = self._retry_request(
-                func=lambda: self.session.get(
-                    self.BASE_URL,
-                    params=params,
-                    headers=self._get_headers(),
-                    timeout=self.DEFAULT_TIMEOUT
-                ),
-                max_retries=self.max_retries,
-                backoff=self.retry_backoff
-            )
+            prices = self._fetch_prices_for_date(country_zone, date, "A01", currency, use_cache)
+            if prices:
+                logger.info(f"Found {len(prices)} day-ahead prices for {date}")
+                return prices
+            else:
+                logger.info(f"No day-ahead prices found for {date}, trying other strategies")
+        except ENTSOEEClientError as e:
+            logger.warning(f"Day-ahead (A01) failed for {date}: {e}")
+        
+        # Strategy 2: Try intraday prices for the requested date
+        logger.info(f"Strategy 2: Trying intraday (A03) for {country_zone} on {date}")
+        try:
+            prices = self._fetch_prices_for_date(country_zone, date, "A03", currency, use_cache)
+            if prices:
+                logger.info(f"Found {len(prices)} intraday prices for {date}")
+                return prices
+            else:
+                logger.info(f"No intraday prices found for {date}, trying other strategies")
+        except ENTSOEEClientError as e:
+            logger.warning(f"Intraday (A03) failed for {date}: {e}")
+        
+        # Strategy 3: Try day-ahead prices for tomorrow (published today)
+        tomorrow = date + timedelta(days=1)
+        logger.info(f"Strategy 3: Trying day-ahead (A01) for {country_zone} on {tomorrow}")
+        try:
+            prices = self._fetch_prices_for_date(country_zone, tomorrow, "A01", currency, use_cache)
+            if prices:
+                logger.info(f"Found {len(prices)} day-ahead prices for {tomorrow} (published today)")
+                # Cache with tomorrow's date
+                if use_cache:
+                    self.cache.set(country_zone, tomorrow, prices, self.cache_ttl)
+                return prices
+        except ENTSOEEClientError as e:
+            logger.warning(f"Day-ahead (A01) for tomorrow failed: {e}")
+        
+        # Strategy 4: Try previous days (day-ahead prices)
+        for days_back in range(1, max_retry_days + 1):
+            prev_date = date - timedelta(days=days_back)
+            logger.info(f"Strategy 4: Trying day-ahead (A01) for {country_zone} on {prev_date} ({days_back} days back)")
+            try:
+                prices = self._fetch_prices_for_date(country_zone, prev_date, "A01", currency, use_cache)
+                if prices:
+                    logger.info(f"Found {len(prices)} day-ahead prices for {prev_date}")
+                    return prices
+            except ENTSOEEClientError as e:
+                logger.warning(f"Day-ahead (A01) for {prev_date} failed: {e}")
             
-            # Parse XML response
-            prices = self._parse_day_ahead_response(response.text, currency)
-            
-            # Cache the result
-            if use_cache and prices:
-                self.cache.set(country_zone, date, prices, self.cache_ttl)
-            
-            return prices
-            
-        except requests.exceptions.Timeout:
-            raise ENTSOEEClientError(
-                f"Request timed out for {country_zone} on {date}"
-            )
-        except requests.exceptions.ConnectionError as e:
-            raise ENTSOEEClientError(
-                f"Connection error fetching data for {country_zone} on {date}: {e}"
-            )
-        except requests.exceptions.HTTPError as e:
-            status_code = getattr(e.response, 'status_code', 'unknown')
-            raise ENTSOEEClientError(
-                f"HTTP error {status_code} for {country_zone} on {date}: {e}"
-            )
-        except Exception as e:
-            raise ENTSOEEClientError(
-                f"Unexpected error fetching data for {country_zone} on {date}: {e}"
-            )
+            # Also try intraday for previous days
+            try:
+                prices = self._fetch_prices_for_date(country_zone, prev_date, "A03", currency, use_cache)
+                if prices:
+                    logger.info(f"Found {len(prices)} intraday prices for {prev_date}")
+                    return prices
+            except ENTSOEEClientError as e:
+                pass  # Already logged above
+        
+        # If all strategies failed, return empty list (no error, just no data)
+        logger.warning(f"No price data found for {country_zone} on {date} (tried all strategies)")
+        return []
     
     def _parse_day_ahead_response(
         self,
