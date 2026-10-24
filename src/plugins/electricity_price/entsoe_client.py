@@ -485,17 +485,30 @@ class ENTSOEEClient:
                 logger.info(f"Using cached data for {country_zone} on {date}")
                 return cached_data
         
-        # Strategy 1: Try day-ahead prices for the requested date
-        logger.info(f"Strategy 1: Trying day-ahead (A01) for {country_zone} on {date}")
+        # Strategy 1a: Try day-ahead prices with A01 for the requested date
+        logger.info(f"Strategy 1a: Trying day-ahead (A01) for {country_zone} on {date}")
         try:
             prices = self._fetch_prices_for_date(country_zone, date, "A01", currency, use_cache)
             if prices:
                 logger.info(f"Found {len(prices)} day-ahead prices for {date}")
                 return prices
             else:
-                logger.info(f"No day-ahead prices found for {date}, trying other strategies")
+                logger.info(f"No day-ahead prices found for {date} with A01")
         except ENTSOEEClientError as e:
             logger.warning(f"Day-ahead (A01) failed for {date}: {e}")
+        
+        # Strategy 1b: Try day-ahead prices with A16 for the requested date
+        # (A16 is also used for day-ahead in some contexts)
+        logger.info(f"Strategy 1b: Trying day-ahead (A16) for {country_zone} on {date}")
+        try:
+            prices = self._fetch_prices_for_date(country_zone, date, "A16", currency, use_cache)
+            if prices:
+                logger.info(f"Found {len(prices)} day-ahead prices for {date} with A16")
+                return prices
+            else:
+                logger.info(f"No day-ahead prices found for {date} with A16")
+        except ENTSOEEClientError as e:
+            logger.warning(f"Day-ahead (A16) failed for {date}: {e}")
         
         # Strategy 2: Try intraday prices for the requested date
         logger.info(f"Strategy 2: Trying intraday (A03) for {country_zone} on {date}")
