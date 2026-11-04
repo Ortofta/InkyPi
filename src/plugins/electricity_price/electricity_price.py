@@ -79,10 +79,20 @@ class ElectricityPrice(BasePlugin):
     def generate_settings_template(self):
         """Generate default settings template."""
         template_params = super().generate_settings_template()
-        template_params["zone"] = "SE4"
-        template_params["data_source"] = "auto"
-        template_params["show_max_label"] = True
-        template_params["entsoe_api_key"] = ""
+        
+        # Set defaults, but preserve any existing settings from config
+        defaults = {
+            "zone": "SE4",
+            "data_source": "auto",
+            "show_max_label": True,
+            "entsoe_api_key": "",
+            "exchange_rate_sek": self.DEFAULT_EXCHANGE_RATE_SEK
+        }
+        
+        # If config has saved settings, use them; otherwise use defaults
+        for key, default_value in defaults.items():
+            template_params[key] = self.config.get(key, default_value)
+        
         return template_params
 
     def _get_data_source(self, settings: Dict[str, Any]) -> str:

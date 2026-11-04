@@ -138,17 +138,23 @@
     zoneSelect.addEventListener("change", updateDataSourceUI);
     
     // Initialize based on current values
-    if (loadPluginSettings) {
-      dataSourceSelect.value = pluginSettings.data_source || "auto";
-      zoneSelect.value = pluginSettings.zone || "SE4";
-      document.getElementById("show_max_label").value = 
-        pluginSettings.show_max_label !== false ? "true" : "false";
-      document.getElementById("entsoe_api_key").value = 
-        pluginSettings.entsoe_api_key || "";
-      document.getElementById("exchange_rate_sek").value = 
-        pluginSettings.exchange_rate_sek || "11.0";
-    }
-    
+  // Try to load from pluginSettings if available, otherwise use defaults
+  const currentSettings = typeof pluginSettings !== 'undefined' ? pluginSettings : {};
+  const currentDataSource = currentSettings.data_source || "auto";
+  const currentZone = currentSettings.zone || "SE4";
+  const currentShowLabel = currentSettings.show_max_label !== false ? "true" : "false";
+  const currentApiKey = currentSettings.entsoe_api_key || "";
+  const currentExchangeRate = currentSettings.exchange_rate_sek || "11.0";
+  
+  // Only set values if we have settings to load
+  if (typeof loadPluginSettings !== 'undefined' && loadPluginSettings) {
+    dataSourceSelect.value = currentDataSource;
+    zoneSelect.value = currentZone;
+    document.getElementById("show_max_label").value = currentShowLabel;
+    document.getElementById("entsoe_api_key").value = currentApiKey;
+    document.getElementById("exchange_rate_sek").value = currentExchangeRate;
+  }
+  
     // Update UI based on initial values
     updateDataSourceUI();
   });
