@@ -182,6 +182,14 @@ class ElectricityPrice(BasePlugin):
             else:
                 raise RuntimeError(f"Failed to fetch price data: {e}")
         
+        # Additional fallback: if ENTSO-E returned empty data for a Swedish zone, try Swedish API
+        if not self.data and not use_swedish and is_swedish_zone(zone):
+            logger.info(f"ENTSO-E returned no data for Swedish zone {zone}, falling back to Swedish API")
+            try:
+                self.data = self.fetch_swedish_json(zone)
+            except Exception as e:
+                logger.error(f"Both APIs returned no data: ENTSO-E (empty), Swedish={e}")
+        
         data_dicts = [asdict(entry) for entry in self.data]
         template_params = {"data": data_dicts}
 
@@ -260,9 +268,11 @@ class ElectricityPrice(BasePlugin):
         exchange_rate = self._get_exchange_rate(zone, settings)
         
         # Fetch raw prices from ENTSO-E
+        # For Swedish zones, use fewer retry days to fail faster and fallback to Swedish API
         import datetime as dt
         today = dt.datetime.now().date()
-        entsoe_prices = client.get_day_ahead_prices(zone, today)
+        max_retry_days = 2 if is_swedish_zone(zone) else 7
+        entsoe_prices = client.get_day_ahead_prices(zone, today, max_retry_days=max_retry_days)
         
         # Convert to plugin format
         plugin_data = client.to_plugin_format(
