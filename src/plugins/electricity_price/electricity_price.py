@@ -118,6 +118,42 @@ class ElectricityPrice(BasePlugin):
             # Use Swedish API for Swedish zones, ENTSO-E for others
             return is_swedish_zone(zone)
 
+    def _get_data_source_info(self, use_swedish: bool, data_source: str, 
+                               fallback: bool, zone: str) -> Dict[str, Any]:
+        """
+        Generate data source information for user feedback.
+        
+        Args:
+            use_swedish: Whether Swedish API was used
+            data_source: Configured data source
+            fallback: Whether we fell back from one API to another
+            zone: Country/zone code
+            
+        Returns:
+            Dictionary with data source info for template
+        """
+        from datetime import datetime
+        
+        # Determine source name and type
+        if use_swedish:
+            source_name = "Swedish API"
+            source_type = "source-swedish"
+        else:
+            source_name = "ENTSO-E API"
+            source_type = "source-entsoe"
+        
+        # Add fallback indicator if we switched
+        if fallback:
+            source_name = f"{source_name} (Fallback)"
+            source_type = "source-fallback"
+        
+        return {
+            "source_name": source_name,
+            "source_type": source_type,
+            "last_updated": datetime.now().strftime("%H:%M:%S"),
+            "entry_count": len(self.data)
+        }
+
     def _get_entsoe_client(self, settings: Dict[str, Any]) -> Optional[ENTSOEEClient]:
         """
         Get or create ENTSO-E client instance.
@@ -197,12 +233,25 @@ class ElectricityPrice(BasePlugin):
             logger.info(f"ENTSO-E returned no data for Swedish zone {zone}, falling back to Swedish API")
             try:
                 self.data = self.fetch_swedish_json(zone)
+                # Update data source info since we fell back
+                use_swedish = True
+                data_source_fallback = True
             except Exception as e:
                 logger.error(f"Both APIs returned no data: ENTSO-E (empty), Swedish={e}")
+                data_source_fallback = False
+        else:
+            data_source_fallback = False
+        
+        # Track data source and timestamp for user feedback
+        data_source_info = self._get_data_source_info(use_swedish, data_source, data_source_fallback, zone)
+        
+        # Check if we have data and add warning if not
+        warning_message = None
+        if not self.data:
+            warning_message = "No price data available for selected zone and date"
         
         data_dicts = [asdict(entry) for entry in self.data]
-        template_params = {"data": data_dicts}
-
+        
         dimensions = device_config.get_resolution()
         if device_config.get_config("orientation") == "vertical":
             dimensions = dimensions[::-1]
@@ -211,10 +260,15 @@ class ElectricityPrice(BasePlugin):
         time_format = device_config.get_config("time_format", default="12h")
         tz = pytz.timezone(timezone)
 
-        template_params["plugin_settings"] = settings
-        template_params["title"] = "Electricity Prices - " + datetime.now(tz).strftime("%Y-%m-%d")
-        template_params["current_date"] = datetime.now(tz).strftime("%Y-%m-%d")
-        template_params["zone"] = zone
+        template_params = {
+            "data": data_dicts,
+            "plugin_settings": settings,
+            "title": "Electricity Prices - " + datetime.now(tz).strftime("%Y-%m-%d"),
+            "current_date": datetime.now(tz).strftime("%Y-%m-%d"),
+            "zone": zone,
+            "data_source_info": data_source_info,
+            "warning_message": warning_message,
+        }
 
         # Add last refresh time
         now = datetime.now(tz)
