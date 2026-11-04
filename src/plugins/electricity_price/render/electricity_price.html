@@ -54,7 +54,7 @@
     </div>
     {# Status bar with data source and update info #}
     {% if data_source_info %}
-    <div class="status-bar {{ data_source_info.source_type }}">
+    <div class="status-bar {{ data_source_info.source_type }}" style="margin-bottom: 12px;">
       <div class="status-item">
         <span class="status-label">Source:</span>
         <span class="status-value">{{ data_source_info.source_name }}</span>
@@ -166,8 +166,14 @@
         },
         scales: {
           x: {
+            display: true,
             title: { display: true, text: 'Time', color: '#000000', font: { size: 12, weight: '700' } },
-            ticks: { color: '#000000', font: { size: 11, weight: '600' } },
+            ticks: { 
+              display: true,
+              color: '#000000', 
+              font: { size: 11, weight: '600' },
+              padding: 8
+            },
             grid: { color: 'rgba(0,0,0,0.08)', borderColor: 'rgba(0,0,0,0.8)' }
           },
           y: {
