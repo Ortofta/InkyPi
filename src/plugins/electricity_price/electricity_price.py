@@ -278,6 +278,20 @@ class ElectricityPrice(BasePlugin):
             last_refresh_time = now.strftime("%Y-%m-%d %I:%M %p")
         template_params["last_refresh_time"] = last_refresh_time
 
+        # "Now" marker label for the current 15-minute interval, computed in the
+        # data's own timezone (device tz may differ; ENTSO-E times are UTC)
+        now_label = None
+        try:
+            data_tz = datetime.fromisoformat(data_dicts[0]["time_start"]).tzinfo or pytz.UTC
+        except (IndexError, KeyError, ValueError):
+            data_tz = tz
+        now_data = datetime.now(data_tz)
+        today_str = now_data.strftime("%Y-%m-%d")
+        if any(entry.get("time_start", "").startswith(today_str) for entry in data_dicts):
+            now_floored = now_data.replace(minute=(now_data.minute // 15) * 15, second=0, microsecond=0)
+            now_label = now_floored.strftime("%H:%M")
+        template_params["now_label"] = now_label
+
         image = self.render_image(
             dimensions,
             "electricity_price.html",

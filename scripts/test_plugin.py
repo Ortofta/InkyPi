@@ -1,6 +1,8 @@
 import json
-from src.plugins.plugin_registry import load_plugins, get_plugin_instance
-from src.utils.image_utils import resize_image, change_orientation
+import sys
+sys.path.insert(0, 'src')
+from plugins.plugin_registry import load_plugins, get_plugin_instance
+from utils.image_utils import resize_image, change_orientation
 from unittest.mock import patch, MagicMock
 from PIL import Image
 
@@ -13,12 +15,9 @@ RESOLUTIONS = [
 ]
 ORIENTATIONS = ["horizontal", "vertical"]
 
-plugin_id = "ai_text"
+plugin_id = "electricity_price"
 plugin_settings = {
-    "title": "Today In History",
-    "textModel": "gpt-4o",
-    "textPrompt": "idk",
-    "selectedFrame": "Rectangle"
+    "zone": "SE4"
 }
 
 mock_device_config = MagicMock()

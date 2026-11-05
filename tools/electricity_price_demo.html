@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Electricity Price Demo</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; }
+    .container { width: 900px; margin: 0 auto; }
+    canvas { background: #fff; border-radius: 8px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>Electricity Prices Demo</h2>
+    <canvas id="priceChart" width="900" height="400"></canvas>
+  </div>
+  <script>
+    // Sample data copied from your logs (truncated)
+    const data = [
+      {SEK_per_kWh:0.71904, time_start:'2025-11-11T00:00:00+01:00'},
+      {SEK_per_kWh:0.71266, time_start:'2025-11-11T00:15:00+01:00'},
+      {SEK_per_kWh:0.70574, time_start:'2025-11-11T00:30:00+01:00'},
+      {SEK_per_kWh:0.6964,  time_start:'2025-11-11T00:45:00+01:00'},
+      {SEK_per_kWh:0.67485, time_start:'2025-11-11T01:00:00+01:00'},
+      {SEK_per_kWh:1.58461, time_start:'2025-11-11T17:00:00+01:00'},
+      {SEK_per_kWh:1.55966, time_start:'2025-11-11T17:15:00+01:00'},
+      {SEK_per_kWh:1.394,   time_start:'2025-11-11T17:30:00+01:00'},
+      {SEK_per_kWh:1.08609, time_start:'2025-11-11T17:45:00+01:00'},
+      {SEK_per_kWh:0.37716, time_start:'2025-11-11T23:45:00+01:00'}
+    ];
+
+    const sekPrices = data.map(d => Number(d.SEK_per_kWh));
+    const labels = data.map(d => d.time_start.slice(11,16));
+    const maxPrice = Math.max(...sekPrices);
+
+    const ctx = document.getElementById('priceChart').getContext('2d');
+    const priceChart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: labels,
+        datasets: [{
+          label: 'SEK per kWh',
+          data: sekPrices,
+          borderColor: 'rgba(54, 162, 235, 1)',
+          backgroundColor: 'rgba(54, 162, 235, 0.2)',
+          fill: true,
+          tension: 0.3
+        }]
+      },
+      options: {
+        responsive: false,
+        plugins: {
+          title: { display: true, text: 'Electricity Prices (SEK/kWh) - demo' }
+        },
+        scales: {
+          y: {
+            beginAtZero: false,
+            suggestedMax: maxPrice + 0.2,
+            ticks: { stepSize: 0.1 }
+          }
+        }
+      }
+    });
+  </script>
+</body>
+</html>
