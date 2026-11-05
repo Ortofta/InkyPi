@@ -1,141 +1,199 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <title>Electricity Prices</title>
-  <link rel="stylesheet" href="electricity_price.css">
-</head>
-<body>
-  {# debug block removed - now rendering chart only #}
-  <div class="chart-container">
-    <div class="date-label">
-      Elpriser - {{ current_date }} ({{ zone }})
+{% extends "plugin.html" %}
+
+{% block content %}
+<div class="chart-container">
+  <div class="date-label">
+    Elpriser - {{ current_date }} ({{ zone }})
+  </div>
+  {# Status bar with data source and update info #}
+  {% if data_source_info %}
+  <div class="status-bar {{ data_source_info.source_type }}">
+    <div class="status-item">
+      <span class="status-label">Source:</span>
+      <span class="status-value">{{ data_source_info.source_name }}</span>
     </div>
+    <div class="status-item">
+      <span class="status-label">Updated:</span>
+      <span class="status-value">{{ data_source_info.last_updated }}</span>
+    </div>
+    <div class="status-item">
+      <span class="status-label">Entries:</span>
+      <span class="status-value">{{ data_source_info.entry_count }}</span>
+    </div>
+  </div>
+  {% endif %}
+  {% if warning_message %}
+  <div class="status-bar source-fallback">
+    <div class="status-item">
+      <span class="warning">{{ warning_message }}</span>
+    </div>
+  </div>
+  {% endif %}
+  <div class="chart-wrapper">
     <canvas id="priceChart" width="{{ width }}" height="{{ height }}"></canvas>
   </div>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@2.2.1"></script>
-  <script>
-    // Build arrays directly from template JSON to avoid runtime parsing differences
-    const sekPrices = {{ data | map(attribute='SEK_per_kWh') | list | tojson }};
-    const times = {{ data | map(attribute='time_start') | list | tojson }};
+</div>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@2.2.1"></script>
+<script>
+  // Build arrays directly from template JSON to avoid runtime parsing differences
+  const sekPrices = {{ data | map(attribute='SEK_per_kWh') | list | tojson }};
+  const times = {{ data | map(attribute='time_start') | list | tojson }};
 
-    // Ensure numbers
-    for (let i = 0; i < sekPrices.length; i++) {
-      sekPrices[i] = Number(sekPrices[i]);
+  // Ensure numbers
+  for (let i = 0; i < sekPrices.length; i++) {
+    sekPrices[i] = Number(sekPrices[i]);
+  }
+
+  const labels = times.map(t => t.slice(11, 16));
+  const maxPrice = Math.max(...sekPrices);
+  const maxPriceIndex = sekPrices.indexOf(maxPrice);
+  const maxPriceTime = labels[maxPriceIndex];
+
+  // "Now" marker: current 15-minute interval (falls back to the hour for hourly data)
+  let nowLabel = {{ now_label | default(None) | tojson }};
+  if (nowLabel && labels.indexOf(nowLabel) === -1) {
+    nowLabel = nowLabel.slice(0, 3) + '00';
+  }
+
+  const annotations = {
+    maxPriceAnnotation: {
+      type: 'label',
+      xValue: maxPriceTime,
+      yValue: maxPrice,
+      content: ['Högsta pris:', maxPrice.toFixed(2) + ' SEK/kWh'],
+      position: 'bottom',
+      yAdjust: 15,
+      backgroundColor: 'rgba(255, 0, 0, 0.8)',
+      color: '#FFFFFF',
+      font: {
+        size: 10,
+        weight: 'bold'
+      },
+      padding: {
+        top: 4,
+        bottom: 4,
+        left: 8,
+        right: 8
+      },
+      borderRadius: 4
     }
+  };
 
-    const labels = times.map(t => t.slice(11, 16));
-    const maxPrice = Math.max(...sekPrices);
-    const maxPriceIndex = sekPrices.indexOf(maxPrice);
-    const maxPriceTime = labels[maxPriceIndex];
-
-    const ctx = document.getElementById('priceChart').getContext('2d');
-    const priceChart = new Chart(ctx, {
+  if (nowLabel && labels.indexOf(nowLabel) !== -1) {
+    annotations.nowLine = {
       type: 'line',
-      data: {
-        labels: labels,
-        datasets: [{
-          label: 'SEK per kWh',
-          data: sekPrices,
-          borderColor: 'rgba(0, 0, 0, 1)',
-          backgroundColor: 'rgba(128, 128, 128, 0.5)',
-          fill: true,
-          tension: 0.3,
-          pointBackgroundColor: function(context) {
-            const index = context.dataIndex;
-            return index === maxPriceIndex ? 'rgba(255, 0, 0, 1)' : 'rgba(0, 0, 0, 1)';
-          },
-          pointRadius: function(context) {
-            const index = context.dataIndex;
-            return index === maxPriceIndex ? 5 : 0;
-          },
-          pointBorderWidth: function(context) {
-            const index = context.dataIndex;
-            return index === maxPriceIndex ? 2 : 0;
-          }
-        }]
-      },
-      options: {
-        responsive: true,
-        plugins: {
-          legend: {
-            display: true,
-            position: 'top',
-            labels: {
-              color: '#000000',
-              font: { size: 12, weight: '700' }
-            }
-          },
-          title: {
-            display: false,
-            text: maxPrice,
-            color: '#000000',
-            font: { size: 14, weight: '700' }
-          },
-          annotation: {
-            annotations: {
-              maxPriceAnnotation: {
-                type: 'label',
-                xValue: maxPriceTime,
-                yValue: maxPrice,
-                content: ['Högsta pris:', maxPrice.toFixed(2) + ' SEK/kWh'],
-                position: 'bottom',
-                yAdjust: 15,
-                backgroundColor: 'rgba(255, 0, 0, 0.8)',
-                color: '#FFFFFF',
-                font: {
-                  size: 10,
-                  weight: 'bold'
-                },
-                padding: {
-                  top: 4,
-                  bottom: 4,
-                  left: 8,
-                  right: 8
-                },
-                borderRadius: 4
-              }
-            }
-          }
+      xMin: nowLabel,
+      xMax: nowLabel,
+      borderColor: 'rgba(230, 126, 34, 0.9)',
+      borderWidth: 2,
+      borderDash: [6, 6],
+      label: {
+        display: true,
+        content: 'Nu ' + nowLabel,
+        position: 'start',
+        backgroundColor: 'rgba(230, 126, 34, 0.85)',
+        color: '#FFFFFF',
+        font: { size: 10, weight: 'bold' },
+        padding: { top: 3, bottom: 3, left: 6, right: 6 },
+        borderRadius: 4
+      }
+    };
+  }
+
+  const ctx = document.getElementById('priceChart').getContext('2d');
+  const priceChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: labels,
+      datasets: [{
+        label: 'SEK per kWh',
+        data: sekPrices,
+        borderColor: 'rgba(0, 0, 0, 1)',
+        backgroundColor: 'rgba(128, 128, 128, 0.5)',
+        fill: true,
+        tension: 0.3,
+        pointBackgroundColor: function(context) {
+          const index = context.dataIndex;
+          return index === maxPriceIndex ? 'rgba(255, 0, 0, 1)' : 'rgba(0, 0, 0, 1)';
         },
-        scales: {
-          x: {
-            title: { display: true, text: 'Time', color: '#000000', font: { size: 12, weight: '700' } },
-            ticks: { color: '#000000', font: { size: 11, weight: '600' } },
-            grid: { color: 'rgba(0,0,0,0.08)', borderColor: 'rgba(0,0,0,0.8)' }
-          },
-          y: {
-            title: { display: true, text: 'SEK/kWh', color: '#000000', font: { size: 12, weight: '700' } },
-            beginAtZero: false,
-            suggestedMax: maxPrice,
-            ticks: { color: '#000000', font: { size: 11, weight: '600' }, stepSize: 0.1 },
-            grid: { color: 'rgba(0,0,0,0.08)', borderColor: 'rgba(0,0,0,0.8)' }
-          }
-        }
-      },
-      plugins: [{
-        id: 'annotation',
-        beforeDraw: function(chart) {
-          const ctx = chart.ctx;
-          const meta = chart.getDatasetMeta(0);
-          const point = meta.data[maxPriceIndex];
-          
-          if (point) {
-            const x = point.x;
-            const y = point.y;
-            
-            // Draw a small circle around the point
-            ctx.save();
-            ctx.beginPath();
-            ctx.arc(x, y, 6, 0, Math.PI * 2);
-            ctx.fillStyle = 'rgba(255, 0, 0, 0.15)';
-            ctx.fill();
-            ctx.restore();
-          }
+        pointRadius: function(context) {
+          const index = context.dataIndex;
+          return index === maxPriceIndex ? 5 : 0;
+        },
+        pointBorderWidth: function(context) {
+          const index = context.dataIndex;
+          return index === maxPriceIndex ? 2 : 0;
         }
       }]
-    });
-  </script>
-</body>
-</html>
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      plugins: {
+        legend: {
+          display: true,
+          position: 'top',
+          labels: {
+            color: '#000000',
+            font: { size: 12, weight: '700' }
+          }
+        },
+        title: {
+          display: false,
+          text: maxPrice,
+          color: '#000000',
+          font: { size: 14, weight: '700' }
+        },
+        annotation: {
+          annotations: annotations
+        }
+      },
+      scales: {
+        x: {
+          display: true,
+          title: { display: true, text: 'Time', color: '#000000', font: { size: 12, weight: '700' } },
+          ticks: {
+            display: true,
+            color: '#000000',
+            font: { size: 11, weight: '600' },
+            padding: 8,
+            autoSkip: true,
+            maxTicksLimit: 12
+          },
+          grid: { color: 'rgba(0,0,0,0.08)', borderColor: 'rgba(0,0,0,0.8)' }
+        },
+        y: {
+          title: { display: true, text: 'SEK/kWh', color: '#000000', font: { size: 12, weight: '700' } },
+          beginAtZero: false,
+          suggestedMax: maxPrice,
+          ticks: { color: '#000000', font: { size: 11, weight: '600' }, stepSize: 0.1 },
+          grid: { color: 'rgba(0,0,0,0.08)', borderColor: 'rgba(0,0,0,0.8)' }
+        }
+      }
+    },
+    plugins: [{
+      id: 'annotation',
+      beforeDraw: function(chart) {
+        const ctx = chart.ctx;
+        const meta = chart.getDatasetMeta(0);
+        const point = meta.data[maxPriceIndex];
+
+        if (point) {
+          const x = point.x;
+          const y = point.y;
+
+          // Draw a small circle around the point
+          ctx.save();
+          ctx.beginPath();
+          ctx.arc(x, y, 6, 0, Math.PI * 2);
+          ctx.fillStyle = 'rgba(255, 0, 0, 0.15)';
+          ctx.fill();
+          ctx.restore();
+        }
+      }
+    }]
+  });
+</script>
+{% endblock %}

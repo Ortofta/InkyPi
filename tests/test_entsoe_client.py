@@ -324,6 +324,12 @@ class TestENTSOEEClientContextManager(TestCase):
 class TestENTSOEEClientMockAPI(TestCase):
     """Test ENTSO-E client with mocked API responses."""
     
+    def setUp(self):
+        # Error-path tests trigger the retry backoff; skip real sleeps
+        sleep_patcher = patch('time.sleep')
+        sleep_patcher.start()
+        self.addCleanup(sleep_patcher.stop)
+    
     @patch('requests.Session.get')
     def test_fetch_with_mock(self, mock_get):
         """Test fetching data with mocked response."""
@@ -374,7 +380,7 @@ class TestENTSOEEClientMockAPI(TestCase):
         client = ENTSOEEClient(api_key="test-key")
         
         with self.assertRaises(ENTSOEEClientError) as context:
-            client.get_day_ahead_prices("SE4", date(2026, 10, 19))
+            client._fetch_prices_for_date("SE4", date(2026, 10, 19), "A01")
         
         self.assertIn("HTTP error 401", str(context.exception))
         
@@ -388,7 +394,7 @@ class TestENTSOEEClientMockAPI(TestCase):
         client = ENTSOEEClient(api_key="test-key")
         
         with self.assertRaises(ENTSOEEClientError) as context:
-            client.get_day_ahead_prices("SE4", date(2026, 10, 19))
+            client._fetch_prices_for_date("SE4", date(2026, 10, 19), "A01")
         
         self.assertIn("Connection error", str(context.exception))
         
@@ -402,9 +408,21 @@ class TestENTSOEEClientMockAPI(TestCase):
         client = ENTSOEEClient(api_key="test-key")
         
         with self.assertRaises(ENTSOEEClientError) as context:
-            client.get_day_ahead_prices("SE4", date(2026, 10, 19))
+            client._fetch_prices_for_date("SE4", date(2026, 10, 19), "A01")
         
         self.assertIn("Request timed out", str(context.exception))
+        
+        client.close()
+    
+    @patch('requests.Session.get')
+    def test_all_strategies_fail_returns_empty(self, mock_get):
+        """Test that get_day_ahead_prices returns [] when every fallback strategy fails."""
+        mock_get.side_effect = requests.exceptions.ConnectionError("Failed to connect")
+        
+        client = ENTSOEEClient(api_key="test-key")
+        prices = client.get_day_ahead_prices("SE4", date(2026, 10, 19))
+        
+        self.assertEqual(prices, [])
         
         client.close()
 
@@ -491,7 +509,7 @@ class TestENTSOEEClientRetry(TestCase):
         client = ENTSOEEClient(api_key="test-key", max_retries=3)
         
         with self.assertRaises(ENTSOEEClientError):
-            client.get_day_ahead_prices("SE4", date(2026, 10, 19))
+            client._fetch_prices_for_date("SE4", date(2026, 10, 19), "A01")
         
         # Should only try once (no retries for 4xx errors except 429)
         self.assertEqual(mock_get.call_count, 1)
