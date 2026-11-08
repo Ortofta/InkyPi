@@ -21,6 +21,8 @@ except ImportError:
     ENTSOE_AVAILABLE = False
     logger.warning("ENTSO-E client not available, falling back to Swedish API only")
 
+from .country_codes import get_zone_currency
+
 
 def get_service_url(zone: str = "SE4", date: datetime.date = None) -> str:
     """
@@ -67,6 +69,7 @@ class ElectricityPrice(BasePlugin):
     
     data: List[ElectricityPriceEntry] = []
     _entsoe_client: Optional[ENTSOEEClient] = None
+    _last_exchange_rate: Optional[float] = None
     
     # Default exchange rate for SEK/EUR (used when ENTSO-E data is converted)
     # This is a fallback value; can be overridden via settings
@@ -86,7 +89,9 @@ class ElectricityPrice(BasePlugin):
             "data_source": "auto",
             "show_max_label": True,
             "entsoe_api_key": "",
-            "exchange_rate_sek": self.DEFAULT_EXCHANGE_RATE_SEK
+            "exchange_rate_source": "auto",
+            "exchange_rate_sek": self.DEFAULT_EXCHANGE_RATE_SEK,
+            "currency": "auto"
         }
         
         # If config has saved settings, use them; otherwise use defaults
@@ -151,7 +156,8 @@ class ElectricityPrice(BasePlugin):
             "source_name": source_name,
             "source_type": source_type,
             "last_updated": datetime.now().strftime("%H:%M:%S"),
-            "entry_count": len(self.data)
+            "entry_count": len(self.data),
+            "exchange_rate": getattr(self, "_last_exchange_rate", None),
         }
 
     def _get_entsoe_client(self, settings: Dict[str, Any]) -> Optional[ENTSOEEClient]:
@@ -242,14 +248,29 @@ class ElectricityPrice(BasePlugin):
         else:
             data_source_fallback = False
         
+        # Resolve display currency ("auto" = the zone's native currency)
+        currency = (settings.get("currency") or "auto").strip().upper()
+        if currency == "AUTO":
+            currency = get_zone_currency(zone)
+
+        # Build the price series in the display currency
+        if currency == "EUR":
+            prices = [entry.EUR_per_kWh for entry in self.data]
+            self._last_exchange_rate = None
+        elif currency == "SEK":
+            prices = [entry.SEK_per_kWh for entry in self.data]
+        else:
+            rate = self._get_exchange_rate(currency, settings)
+            prices = [entry.EUR_per_kWh * rate for entry in self.data]
+
         # Track data source and timestamp for user feedback
         data_source_info = self._get_data_source_info(use_swedish, data_source, data_source_fallback, zone)
-        
+
         # Check if we have data and add warning if not
         warning_message = None
         if not self.data:
             warning_message = "No price data available for selected zone and date"
-        
+
         data_dicts = [asdict(entry) for entry in self.data]
         
         dimensions = device_config.get_resolution()
@@ -266,6 +287,8 @@ class ElectricityPrice(BasePlugin):
             "title": "Electricity Prices - " + datetime.now(tz).strftime("%Y-%m-%d"),
             "current_date": datetime.now(tz).strftime("%Y-%m-%d"),
             "zone": zone,
+            "currency": currency,
+            "prices": prices,
             "data_source_info": data_source_info,
             "warning_message": warning_message,
         }
@@ -343,7 +366,7 @@ class ElectricityPrice(BasePlugin):
             )
         
         # Get exchange rate
-        exchange_rate = self._get_exchange_rate(zone, settings)
+        exchange_rate = self._get_exchange_rate("SEK", settings)
         
         # Fetch raw prices from ENTSO-E
         # For Swedish zones, use fewer retry days to fail faster and fallback to Swedish API
@@ -372,38 +395,69 @@ class ElectricityPrice(BasePlugin):
         
         return result
     
-    def _get_exchange_rate(self, zone: str, settings: Dict[str, Any]) -> float:
+    def _get_exchange_rate(self, currency: str, settings: Dict[str, Any]) -> float:
         """
-        Get exchange rate for SEK conversion.
-        
+        Get exchange rate for converting EUR prices to the display currency.
+
+        With exchange_rate_source "auto" (default) the live rate is fetched from a
+        free API (cached 24h); with "manual" no network call is made and the
+        configured exchange_rate_sek is used for SEK (built-in approximate rates
+        for other currencies). Fallback order after the primary source: manual
+        value, EXCHANGE_RATE_SEK env var (SEK only), then built-in defaults.
+
         Args:
-            zone: Country/zone code
+            currency: Target ISO 4217 currency code (e.g., "SEK", "DKK")
             settings: Plugin settings
-            
+
         Returns:
-            Exchange rate (SEK per EUR)
+            Exchange rate (units of currency per 1 EUR)
         """
-        # Check if user provided a specific exchange rate
-        if settings.get("exchange_rate_sek"):
-            return float(settings["exchange_rate_sek"])
-        
-        # Try to get from environment
-        env_rate = os.getenv("EXCHANGE_RATE_SEK")
-        if env_rate:
+        currency = currency.upper()
+        source = settings.get("exchange_rate_source", "auto")
+
+        # The manual override value is defined as SEK per EUR
+        manual_rate = None
+        if currency == "SEK":
+            raw = settings.get("exchange_rate_sek")
+            if raw not in (None, "", "auto"):
+                try:
+                    manual_rate = float(raw)
+                except (TypeError, ValueError):
+                    manual_rate = None
+
+        # Live lookup first unless the user chose manual
+        if source != "manual":
             try:
-                return float(env_rate)
-            except ValueError:
-                pass
-        
-        # Try to fetch from exchange rate API
-        try:
-            from .exchange_rate import get_rate
-            return get_rate("EUR", "SEK")
-        except Exception as e:
-            logger.warning(f"Failed to fetch exchange rate: {e}, using default")
-        
-        # Use default
-        return self.DEFAULT_EXCHANGE_RATE_SEK
+                from .exchange_rate import get_rate
+                rate = get_rate("EUR", currency)
+                self._last_exchange_rate = rate
+                return rate
+            except Exception as e:
+                logger.warning(f"Failed to fetch live exchange rate EUR->{currency}: {e}")
+
+        # Manual value (SEK only)
+        if manual_rate is not None:
+            self._last_exchange_rate = manual_rate
+            return manual_rate
+
+        # Environment variable (SEK only)
+        if currency == "SEK":
+            env_rate = os.getenv("EXCHANGE_RATE_SEK")
+            if env_rate:
+                try:
+                    rate = float(env_rate)
+                    self._last_exchange_rate = rate
+                    return rate
+                except ValueError:
+                    pass
+            self._last_exchange_rate = self.DEFAULT_EXCHANGE_RATE_SEK
+            return self.DEFAULT_EXCHANGE_RATE_SEK
+
+        # Non-SEK currency without live access: built-in approximate rate
+        from .exchange_rate import get_fallback_rate
+        rate = get_fallback_rate("EUR", currency)
+        self._last_exchange_rate = rate
+        return rate
 
     def fetch_json(self, zone: str = "SE4") -> List[ElectricityPriceEntry]:
         """

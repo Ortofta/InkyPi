@@ -194,3 +194,42 @@ def is_swedish_zone(country_zone: str) -> bool:
         True if the code is a Swedish zone (SE1-SE4)
     """
     return country_zone.upper().startswith("SE") and country_zone.upper() in ENTSOE_COUNTRY_CODES
+
+
+# Native currency (ISO 4217) per country/zone
+ZONE_NATIVE_CURRENCY: Dict[str, str] = {
+    "SE1": "SEK", "SE2": "SEK", "SE3": "SEK", "SE4": "SEK",
+    "NO1": "NOK", "NO2": "NOK", "NO3": "NOK", "NO4": "NOK", "NO5": "NOK",
+    "DK1": "DKK", "DK2": "DKK",
+    "CH": "CHF",
+    "PL": "PLN",
+    "GB": "GBP", "GB-NGA": "GBP",
+    "CZ": "CZK",
+    "HU": "HUF",
+    "RO": "RON",
+    "BG": "BGN",
+}
+
+# Eurozone zones default to EUR
+_EUR_ZONES = [
+    "FI", "DE", "NL", "BE", "FR", "AT", "ES", "PT", "IE",
+    "IT", "IT-NORD", "IT-CNOR", "IT-CSUD", "IT-SUD", "IT-CALA", "IT-SICI", "IT-SARD",
+    "EE", "LV", "LT", "SK", "GR", "HR", "SI",
+]
+ZONE_NATIVE_CURRENCY.update({zone: "EUR" for zone in _EUR_ZONES})
+
+# Currencies offered in the plugin settings (native ones plus common extras)
+SUPPORTED_CURRENCIES = ["EUR", "SEK", "NOK", "DKK", "CHF", "GBP", "PLN", "CZK", "HUF", "RON", "BGN", "USD"]
+
+
+def get_zone_currency(country_zone: str) -> str:
+    """
+    Get the native currency for a country/zone code.
+
+    Args:
+        country_zone: Country/zone code (e.g., "SE4", "DK2", "DE")
+
+    Returns:
+        ISO 4217 currency code (defaults to "EUR" for unknown zones)
+    """
+    return ZONE_NATIVE_CURRENCY.get(country_zone.upper(), "EUR")

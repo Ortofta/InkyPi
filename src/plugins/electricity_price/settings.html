@@ -70,6 +70,28 @@
   </select>
 </div>
 
+<div class="form-group nowrap">
+  <label for="currency" class="form-label">Display Currency:</label>
+  <select id="currency" name="currency" class="form-input">
+    <option value="auto">Auto (zone's native currency)</option>
+    <option value="EUR">EUR - Euro</option>
+    <option value="SEK">SEK - Swedish Krona</option>
+    <option value="NOK">NOK - Norwegian Krone</option>
+    <option value="DKK">DKK - Danish Krone</option>
+    <option value="CHF">CHF - Swiss Franc</option>
+    <option value="GBP">GBP - British Pound</option>
+    <option value="PLN">PLN - Polish Zloty</option>
+    <option value="CZK">CZK - Czech Koruna</option>
+    <option value="HUF">HUF - Hungarian Forint</option>
+    <option value="RON">RON - Romanian Leu</option>
+    <option value="BGN">BGN - Bulgarian Lev</option>
+    <option value="USD">USD - US Dollar</option>
+  </select>
+  <small class="form-help" id="currency_hint">
+    Non-EUR prices are converted from EUR using live exchange rates.
+  </small>
+</div>
+
 <div class="form-group">
   <label for="show_max_label" class="form-label">Show highest price label:</label>
   <select id="show_max_label" name="show_max_label" class="form-input">
@@ -93,12 +115,17 @@
 
 <!-- Exchange Rate for SEK conversion (optional) -->
 <div class="form-group" id="exchange_rate_group" style="display: none;">
-  <label for="exchange_rate_sek" class="form-label">SEK/EUR Exchange Rate:</label>
-  <input type="number" id="exchange_rate_sek" name="exchange_rate_sek" 
+  <label for="exchange_rate_source" class="form-label">SEK/EUR Exchange Rate:</label>
+  <select id="exchange_rate_source" name="exchange_rate_source" class="form-input">
+    <option value="auto">Automatic (live rate, cached 24h)</option>
+    <option value="manual">Manual value below</option>
+  </select>
+  <input type="number" id="exchange_rate_sek" name="exchange_rate_sek"
          class="form-input" step="0.0001" min="0" value="11.0"
-         placeholder="e.g., 11.0">
+         placeholder="e.g., 11.0" style="margin-top: 6px;">
   <small class="form-help">
-    Used when converting ENTSO-E prices (EUR) to SEK. Default is 11.0.
+    Used when converting ENTSO-E prices (EUR) to SEK. Automatic fetches the live
+    rate from a free ECB-based API; the manual value is used as fallback. Default: 11.0.
   </small>
 </div>
 
@@ -136,7 +163,23 @@
     
     // Update when zone changes
     zoneSelect.addEventListener("change", updateDataSourceUI);
-    
+    zoneSelect.addEventListener("change", updateCurrencyHint);
+
+    // Native currency per zone, used for the hint when currency is "auto"
+    const ZONE_CURRENCY = {
+      SE1: "SEK", SE2: "SEK", SE3: "SEK", SE4: "SEK",
+      NO1: "NOK", NO2: "NOK", NO3: "NOK", NO4: "NOK", NO5: "NOK",
+      DK1: "DKK", DK2: "DKK", CH: "CHF", PL: "PLN",
+      GB: "GBP", "GB-NGA": "GBP", CZ: "CZK", HU: "HUF", RO: "RON", BG: "BGN"
+    };
+    const currencyHint = document.getElementById("currency_hint");
+    function updateCurrencyHint() {
+      if (!currencyHint) return;
+      const native = ZONE_CURRENCY[zoneSelect.value] || "EUR";
+      currencyHint.textContent = "Zone " + zoneSelect.value +
+        " native currency: " + native + ". Non-EUR prices are converted from EUR using live exchange rates.";
+    }
+
     // Initialize based on current values
   // Try to load from pluginSettings if available, otherwise use defaults
   const currentSettings = typeof pluginSettings !== 'undefined' ? pluginSettings : {};
@@ -144,17 +187,36 @@
   const currentZone = currentSettings.zone || "SE4";
   const currentShowLabel = currentSettings.show_max_label !== false ? "true" : "false";
   const currentApiKey = currentSettings.entsoe_api_key || "";
+  const currentExchangeRateSource = currentSettings.exchange_rate_source || "auto";
   const currentExchangeRate = currentSettings.exchange_rate_sek || "11.0";
-  
+  const currentCurrency = currentSettings.currency || "auto";
+
+  const rateSourceSelect = document.getElementById("exchange_rate_source");
+  const rateInput = document.getElementById("exchange_rate_sek");
+  function updateRateUI() {
+    if (rateSourceSelect && rateInput) {
+      rateInput.disabled = rateSourceSelect.value === "auto";
+    }
+  }
+  if (rateSourceSelect) {
+    rateSourceSelect.addEventListener("change", updateRateUI);
+  }
+
   // Only set values if we have settings to load
   if (typeof loadPluginSettings !== 'undefined' && loadPluginSettings) {
     dataSourceSelect.value = currentDataSource;
     zoneSelect.value = currentZone;
     document.getElementById("show_max_label").value = currentShowLabel;
     document.getElementById("entsoe_api_key").value = currentApiKey;
-    document.getElementById("exchange_rate_sek").value = currentExchangeRate;
+    if (rateSourceSelect) {
+      rateSourceSelect.value = currentExchangeRateSource;
+    }
+    rateInput.value = currentExchangeRate;
+    document.getElementById("currency").value = currentCurrency;
   }
-  
+
+    updateRateUI();
+    updateCurrencyHint();
     // Update UI based on initial values
     updateDataSourceUI();
   });

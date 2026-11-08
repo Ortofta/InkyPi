@@ -20,6 +20,12 @@
       <span class="status-label">Entries:</span>
       <span class="status-value">{{ data_source_info.entry_count }}</span>
     </div>
+    {% if data_source_info.exchange_rate %}
+    <div class="status-item">
+      <span class="status-label">1 EUR =</span>
+      <span class="status-value">{{ '%.3f'|format(data_source_info.exchange_rate) }} {{ currency | default('SEK') }}</span>
+    </div>
+    {% endif %}
   </div>
   {% endif %}
   {% if warning_message %}
@@ -37,8 +43,11 @@
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@2.2.1"></script>
 <script>
   // Build arrays directly from template JSON to avoid runtime parsing differences
-  const sekPrices = {{ data | map(attribute='SEK_per_kWh') | list | tojson }};
+  // `prices` is precomputed in the display currency; fall back to SEK for old callers
+  const fallbackPrices = {{ data | map(attribute='SEK_per_kWh') | list | tojson }};
+  const sekPrices = {{ prices | default(None) | tojson }} || fallbackPrices;
   const times = {{ data | map(attribute='time_start') | list | tojson }};
+  const currency = {{ currency | default('SEK') | tojson }};
 
   // Ensure numbers
   for (let i = 0; i < sekPrices.length; i++) {
@@ -56,12 +65,22 @@
     nowLabel = nowLabel.slice(0, 3) + '00';
   }
 
+  // Keep the max-price label inside the plot area when the peak is near an edge
+  const edgeFraction = 0.15;
+  let maxLabelXAdjust = 0;
+  if (maxPriceIndex > labels.length * (1 - edgeFraction)) {
+    maxLabelXAdjust = -70;
+  } else if (maxPriceIndex < labels.length * edgeFraction) {
+    maxLabelXAdjust = 70;
+  }
+
   const annotations = {
     maxPriceAnnotation: {
       type: 'label',
       xValue: maxPriceTime,
       yValue: maxPrice,
-      content: ['Högsta pris:', maxPrice.toFixed(2) + ' SEK/kWh'],
+      xAdjust: maxLabelXAdjust,
+      content: ['Högsta pris:', maxPrice.toFixed(2) + ' ' + currency + '/kWh'],
       position: 'bottom',
       yAdjust: 15,
       backgroundColor: 'rgba(255, 0, 0, 0.8)',
@@ -107,7 +126,7 @@
     data: {
       labels: labels,
       datasets: [{
-        label: 'SEK per kWh',
+        label: currency + ' per kWh',
         data: sekPrices,
         borderColor: 'rgba(0, 0, 0, 1)',
         backgroundColor: 'rgba(128, 128, 128, 0.5)',
@@ -165,7 +184,7 @@
           grid: { color: 'rgba(0,0,0,0.08)', borderColor: 'rgba(0,0,0,0.8)' }
         },
         y: {
-          title: { display: true, text: 'SEK/kWh', color: '#000000', font: { size: 12, weight: '700' } },
+          title: { display: true, text: currency + '/kWh', color: '#000000', font: { size: 12, weight: '700' } },
           beginAtZero: false,
           suggestedMax: maxPrice,
           ticks: { color: '#000000', font: { size: 11, weight: '600' }, stepSize: 0.1 },

@@ -291,5 +291,95 @@ class TestElectricityPrice(unittest.TestCase):
         self.assertIsInstance(image, Image.Image)
 
 
+class TestExchangeRateSource(unittest.TestCase):
+    """Test the auto/manual exchange rate source selection."""
+
+    def setUp(self):
+        self.config = {
+            "id": "electricity_price",
+            "name": "Electricity Price",
+            "description": "Show electricity prices",
+            "author": "Test",
+            "version": "1.0.0",
+            "plugin_module": "plugins.electricity_price.electricity_price",
+            "plugin_class": "ElectricityPrice",
+        }
+        self.plugin = ElectricityPrice(self.config)
+
+    @patch("plugins.electricity_price.exchange_rate.get_rate")
+    def test_auto_uses_live_rate(self, mock_get_rate):
+        mock_get_rate.return_value = 11.5
+        settings = {"exchange_rate_source": "auto", "exchange_rate_sek": "11.0"}
+        self.assertEqual(self.plugin._get_exchange_rate("SEK", settings), 11.5)
+        mock_get_rate.assert_called_once_with("EUR", "SEK")
+
+    @patch("plugins.electricity_price.exchange_rate.get_rate")
+    def test_auto_uses_live_rate_for_other_currency(self, mock_get_rate):
+        mock_get_rate.return_value = 7.42
+        settings = {"exchange_rate_source": "auto"}
+        self.assertEqual(self.plugin._get_exchange_rate("DKK", settings), 7.42)
+        mock_get_rate.assert_called_once_with("EUR", "DKK")
+
+    @patch("plugins.electricity_price.exchange_rate.get_rate")
+    def test_auto_falls_back_to_manual_when_live_fails(self, mock_get_rate):
+        mock_get_rate.side_effect = Exception("API down")
+        settings = {"exchange_rate_source": "auto", "exchange_rate_sek": "11.2"}
+        self.assertEqual(self.plugin._get_exchange_rate("SEK", settings), 11.2)
+
+    @patch("plugins.electricity_price.exchange_rate.get_rate")
+    def test_manual_ignores_live(self, mock_get_rate):
+        mock_get_rate.return_value = 11.5
+        settings = {"exchange_rate_source": "manual", "exchange_rate_sek": "11.2"}
+        self.assertEqual(self.plugin._get_exchange_rate("SEK", settings), 11.2)
+        mock_get_rate.assert_not_called()
+
+    @patch("plugins.electricity_price.exchange_rate.get_rate")
+    def test_manual_non_sek_uses_builtin_fallback(self, mock_get_rate):
+        settings = {"exchange_rate_source": "manual"}
+        rate = self.plugin._get_exchange_rate("DKK", settings)
+        self.assertEqual(rate, 7.5)  # built-in approximate DKK rate
+        mock_get_rate.assert_not_called()
+
+    @patch("plugins.electricity_price.exchange_rate.get_rate")
+    def test_default_when_live_and_manual_unavailable(self, mock_get_rate):
+        mock_get_rate.side_effect = Exception("API down")
+        settings = {"exchange_rate_source": "auto"}
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(
+                self.plugin._get_exchange_rate("SEK", settings),
+                ElectricityPrice.DEFAULT_EXCHANGE_RATE_SEK,
+            )
+
+    @patch("plugins.electricity_price.exchange_rate.get_rate")
+    def test_records_rate_used(self, mock_get_rate):
+        mock_get_rate.return_value = 11.5
+        settings = {"exchange_rate_source": "auto"}
+        self.plugin._get_exchange_rate("SEK", settings)
+        self.assertEqual(self.plugin._last_exchange_rate, 11.5)
+
+
+class TestZoneCurrency(unittest.TestCase):
+    """Test zone-to-native-currency mapping."""
+
+    def test_nordic_zones(self):
+        from plugins.electricity_price.country_codes import get_zone_currency
+        self.assertEqual(get_zone_currency("SE4"), "SEK")
+        self.assertEqual(get_zone_currency("NO1"), "NOK")
+        self.assertEqual(get_zone_currency("DK2"), "DKK")
+
+    def test_euro_and_others(self):
+        from plugins.electricity_price.country_codes import get_zone_currency
+        self.assertEqual(get_zone_currency("DE"), "EUR")
+        self.assertEqual(get_zone_currency("FI"), "EUR")
+        self.assertEqual(get_zone_currency("CH"), "CHF")
+        self.assertEqual(get_zone_currency("PL"), "PLN")
+        self.assertEqual(get_zone_currency("GB"), "GBP")
+        self.assertEqual(get_zone_currency("BG"), "BGN")
+
+    def test_unknown_zone_defaults_to_eur(self):
+        from plugins.electricity_price.country_codes import get_zone_currency
+        self.assertEqual(get_zone_currency("XX"), "EUR")
+
+
 if __name__ == "__main__":
     unittest.main()

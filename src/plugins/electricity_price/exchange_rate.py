@@ -297,6 +297,7 @@ class ExchangeRateFetcher:
             "CZK": 24.5,    # Czech Koruna
             "HUF": 380.0,   # Hungarian Forint
             "RON": 4.9,     # Romanian Leu
+            "BGN": 1.9558,  # Bulgarian Lev (pegged to EUR)
         }
         
         if to_currency in fallback_rates:
@@ -369,3 +370,17 @@ def get_rate(from_currency: str, to_currency: str) -> float:
         Exchange rate
     """
     return get_exchange_rate_fetcher().get_rate(from_currency, to_currency)
+
+
+def get_fallback_rate(from_currency: str, to_currency: str) -> float:
+    """
+    Built-in approximate rate without any network access.
+
+    Args:
+        from_currency: Source currency code
+        to_currency: Target currency code
+
+    Returns:
+        Approximate exchange rate (1.0 if unknown)
+    """
+    return ExchangeRateFetcher()._get_fallback_rate(from_currency.upper(), to_currency.upper())
