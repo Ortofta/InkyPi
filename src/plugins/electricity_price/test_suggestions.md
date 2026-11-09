@@ -1,5 +1,11 @@
 # Additional Test Suggestions for Electricity Price Plugin
 
+> Status (2026-11): sections 1-5 are implemented in `TestAdditionalCoverage` in
+> `test_electricity_price_comprehensive.py` (API validation, network errors, edge-case
+> data, timezone handling for the now-marker, performance, and a live integration test
+> gated behind `RUN_INTEGRATION_TESTS=1`). Property-based (Hypothesis) and visual
+> regression testing remain open — they need new dependencies/reference images.
+
 ## Current Test Coverage
 The comprehensive test suite covers:
 - ✅ URL generation for different zones

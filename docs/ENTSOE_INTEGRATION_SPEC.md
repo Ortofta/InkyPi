@@ -509,27 +509,27 @@ Add to plugin-info.json or documentation:
 ## 11. Implementation Phases
 
 ### Phase 1: Core ENTSO-E Integration (High Priority)
-- [ ] Implement `ENTSOEEClient` class
-- [ ] XML parsing and data normalization
-- [ ] Basic error handling
-- [ ] Unit tests with mock data
-- [ ] Settings UI updates
+- [x] Implement `ENTSOEEClient` class
+- [x] XML parsing and data normalization
+- [x] Basic error handling
+- [x] Unit tests with mock data
+- [x] Settings UI updates
 
 **Estimated effort:** 4-6 hours
 
 ### Phase 2: Enhanced Features (Medium Priority)
-- [ ] Caching implementation
-- [ ] Retry logic with exponential backoff
-- [ ] Exchange rate support (for SEK conversion)
-- [ ] All 25+ countries support
-- [ ] Integration tests
+- [x] Caching implementation (in-memory TTL on the client)
+- [x] Retry logic with exponential backoff
+- [x] Exchange rate support (live ECB/Frankfurter rate, cached 24h; manual override for SEK; built-in fallbacks)
+- [x] All 25+ countries support
+- [x] Integration tests (live API test gated behind `RUN_INTEGRATION_TESTS=1`)
 
 **Estimated effort:** 4-8 hours
 
 ### Phase 3: Polish & Documentation (Low Priority)
 - [ ] Performance optimization
 - [ ] Better error messages
-- [ ] Documentation updates
+- [x] Documentation updates (this document, 2026-11)
 - [ ] Example configurations
 
 **Estimated effort:** 2-4 hours
@@ -573,22 +573,50 @@ src/config/device_dev.json                         # Optional: API key
 
 ---
 
-## 14. Open Questions
+## 14. Open Questions — Resolved (2026-11)
 
-1. **Exchange Rate Source:** Should we hardcode rates, fetch from API, or omit SEK for non-Swedish countries?
-2. **Caching Strategy:** In-memory only, or persist to disk?
-3. **Fallback Behavior:** If ENTSO-E fails, should we try Swedish API as fallback for SE zones?
-4. **Historical Data:** Should we support fetching prices for past dates?
-5. **Time Zone Handling:** Should prices be displayed in local time or UTC?
+1. **Exchange Rate Source:** Live rate from Frankfurter (ECB reference rates, no API key),
+   cached 24h in memory. A manual SEK/EUR override and the `EXCHANGE_RATE_SEK` env var remain
+   as fallbacks, plus built-in approximate rates for offline use. A currency selector lets
+   users display any supported currency (zone-native by default), converting from EUR.
+2. **Caching Strategy:** In-memory with TTL (24h for exchange rates, configurable on the
+   ENTSO-E client). `ExchangeRateFetcher` also supports a disk cache, but the plugin uses
+   memory only.
+3. **Fallback Behavior:** Yes. For SE zones the Swedish API is tried when ENTSO-E fails or
+   returns empty. The client also tries multiple strategies internally (A01/A16 day-ahead,
+   A03 intraday, tomorrow's day-ahead, previous days up to `max_retry_days`).
+4. **Historical Data:** The client supports arbitrary dates
+   (`get_day_ahead_prices(zone, date, max_retry_days=...)`); the plugin UI shows the current
+   day only. Exposing a date picker would be a future UI change.
+5. **Time Zone Handling:** The chart shows times in the data's own timezone (Swedish API:
+   local +01:00; ENTSO-E: UTC). The "now" marker is computed in the data's timezone so it
+   always aligns with the x-axis, regardless of the device timezone setting. The title date
+   and refresh time use the device-configured timezone.
 
 ---
 
 ## 15. Next Steps
 
-1. **Review this spec** - Provide feedback on approach
-2. **Prioritize features** - Which phase 2 items are critical?
-3. **Resolve open questions** - Decide on the 5 questions above
-4. **Implementation** - Start with Phase 1
+Phases 1 and 2 are implemented; open questions in section 14 are resolved. Remaining:
+
+1. **Phase 3 items** - performance optimization, better error messages, example configurations
+2. **Optional UI additions** - historical date picker, lowest-price label, now-marker toggle
+
+## 16. Post-Implementation Notes (2026-11)
+
+Rendering lessons learned while building the chart (see `render/electricity_price.html`):
+
+- The render template must extend `plugin.html` so stylesheets load via absolute paths
+  (the HTML is screenshotted from a temp file, so relative CSS links silently fail).
+- Layout must fit the exact device viewport (flex column, `html,body { height: 100% }`,
+  canvas in a `flex: 1` wrapper with `maintainAspectRatio: false`), otherwise the
+  bottom of the chart — including the x-axis — is clipped by the screenshot.
+- `animation: false` is required: headless screenshots fire during Chart.js's entry
+  animation, capturing a half-drawn curve.
+- Y-axis uses `maxTicksLimit` instead of a fixed `stepSize` so high-value currencies
+  (HUF, CZK, ...) stay readable.
+- The max-price annotation uses `xAdjust` to stay inside the plot when the peak is
+  near the left/right edge.
 
 ---
 

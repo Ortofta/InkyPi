@@ -1,0 +1,3 @@
+# Runtime-generated images are not tracked
+*.png
+!inkypi.png

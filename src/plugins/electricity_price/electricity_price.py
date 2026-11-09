@@ -67,16 +67,17 @@ class ElectricityPrice(BasePlugin):
     - entsoe: Always use ENTSO-E API
     """
     
-    data: List[ElectricityPriceEntry] = []
-    _entsoe_client: Optional[ENTSOEEClient] = None
-    _last_exchange_rate: Optional[float] = None
-    
     # Default exchange rate for SEK/EUR (used when ENTSO-E data is converted)
     # This is a fallback value; can be overridden via settings
     DEFAULT_EXCHANGE_RATE_SEK = 11.0
 
     def __init__(self, config):
         super().__init__(config)
+        # Instance state (must not be class-level: multiple playlist entries
+        # would otherwise share the same data/client/rate)
+        self.data = []
+        self._entsoe_client = None
+        self._last_exchange_rate = None
         self.data_source = None  # Will be set from settings in generate_image
 
     def generate_settings_template(self):
@@ -289,6 +290,7 @@ class ElectricityPrice(BasePlugin):
             "zone": zone,
             "currency": currency,
             "prices": prices,
+            "show_max_label": str(settings.get("show_max_label", "true")).lower() not in ("false", "0", "no"),
             "data_source_info": data_source_info,
             "warning_message": warning_message,
         }

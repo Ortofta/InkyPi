@@ -5,13 +5,16 @@ Tests various scenarios including error handling, edge cases, and configuration 
 """
 
 import os
+import re
 import sys
 
 sys.path.insert(0, "src")
 
 import unittest
-from datetime import datetime
+from datetime import datetime, timedelta, timezone as dt_timezone
 from unittest.mock import MagicMock, patch
+
+import requests
 
 from PIL import Image
 
@@ -102,8 +105,9 @@ class TestElectricityPrice(unittest.TestCase):
         with self.assertRaises(Exception):
             self.plugin.fetch_json("SE4")
 
+    @patch("plugins.base_plugin.base_plugin.take_screenshot_html")
     @patch("plugins.electricity_price.electricity_price.requests.get")
-    def test_generate_image_success(self, mock_get):
+    def test_generate_image_success(self, mock_get, mock_shot):
         """Test successful image generation"""
         # Mock response with realistic data
         mock_response = MagicMock()
@@ -118,6 +122,7 @@ class TestElectricityPrice(unittest.TestCase):
             for i in range(24)
         ]
         mock_get.return_value = mock_response
+        mock_shot.return_value = Image.new("RGB", (800, 480))
 
         # Test with max label enabled
         settings = self.base_settings.copy()
@@ -128,9 +133,13 @@ class TestElectricityPrice(unittest.TestCase):
         self.assertIsNotNone(image)
         self.assertIsInstance(image, Image.Image)
         self.assertEqual(image.size, (800, 480))
+        # Max label annotation must be present in the rendered HTML
+        html = mock_shot.call_args[0][0]
+        self.assertIn("Högsta pris", html)
 
+    @patch("plugins.base_plugin.base_plugin.take_screenshot_html")
     @patch("plugins.electricity_price.electricity_price.requests.get")
-    def test_generate_image_max_label_disabled(self, mock_get):
+    def test_generate_image_max_label_disabled(self, mock_get, mock_shot):
         """Test image generation with max label disabled"""
         # Mock response
         mock_response = MagicMock()
@@ -145,15 +154,19 @@ class TestElectricityPrice(unittest.TestCase):
             for i in range(24)
         ]
         mock_get.return_value = mock_response
+        mock_shot.return_value = Image.new("RGB", (800, 480))
 
-        # Test with max label disabled
+        # Test with max label disabled (form submits strings)
         settings = self.base_settings.copy()
-        settings["show_max_label"] = False
+        settings["show_max_label"] = "false"
 
         image = self.plugin.generate_image(settings, self.mock_device_config)
 
         self.assertIsNotNone(image)
         self.assertIsInstance(image, Image.Image)
+        # Max label annotation must be absent from the rendered HTML
+        html = mock_shot.call_args[0][0]
+        self.assertNotIn("Högsta pris", html)
 
     @patch("plugins.electricity_price.electricity_price.requests.get")
     def test_generate_image_different_zones(self, mock_get):
@@ -379,6 +392,169 @@ class TestZoneCurrency(unittest.TestCase):
     def test_unknown_zone_defaults_to_eur(self):
         from plugins.electricity_price.country_codes import get_zone_currency
         self.assertEqual(get_zone_currency("XX"), "EUR")
+
+
+class TestInstanceIsolation(unittest.TestCase):
+    """Plugin instances (e.g., multiple playlist entries) must not share state."""
+
+    def _make_plugin(self):
+        config = {
+            "id": "electricity_price", "name": "Electricity Price",
+            "description": "", "author": "", "version": "1.0.0",
+            "plugin_module": "plugins.electricity_price.electricity_price",
+            "plugin_class": "ElectricityPrice",
+        }
+        return ElectricityPrice(config)
+
+    def test_instances_do_not_share_data(self):
+        p1 = self._make_plugin()
+        p2 = self._make_plugin()
+        p1.data = [ElectricityPriceEntry(
+            SEK_per_kWh=1.0, EUR_per_kWh=0.09, EXR=11.0,
+            time_start="2026-11-05 00:00:00", time_end="2026-11-05 01:00:00",
+        )]
+        p1._last_exchange_rate = 11.1
+        p1._entsoe_client = object()
+        self.assertEqual(p2.data, [])
+        self.assertIsNone(p2._last_exchange_rate)
+        self.assertIsNone(p2._entsoe_client)
+
+
+class TestAdditionalCoverage(unittest.TestCase):
+    """Edge-case, error-handling, timezone and performance tests (from test_suggestions.md)."""
+
+    def setUp(self):
+        self.config = {
+            "id": "electricity_price", "name": "Electricity Price",
+            "description": "", "author": "", "version": "1.0.0",
+            "plugin_module": "plugins.electricity_price.electricity_price",
+            "plugin_class": "ElectricityPrice",
+        }
+        self.plugin = ElectricityPrice(self.config)
+        self.mock_device_config = MagicMock()
+        self.mock_device_config.get_resolution.return_value = [800, 480]
+        self.mock_device_config.get_config.side_effect = lambda key, default=None: {
+            "orientation": "horizontal",
+            "timezone": "Europe/Stockholm",
+            "time_format": "24h",
+        }.get(key, default)
+        self.base_settings = {"zone": "SE4", "show_max_label": True}
+
+    @staticmethod
+    def _entries(prices, start_date="2023-01-01", with_t=True):
+        sep = "T" if with_t else " "
+        suffix = "+01:00" if with_t else ""
+        return [
+            {
+                "SEK_per_kWh": p,
+                "EUR_per_kWh": round(p / 11.2, 4),
+                "EXR": 11.2,
+                "time_start": f"{start_date}{sep}{i:02d}:00:00{suffix}",
+                "time_end": f"{start_date}{sep}{min(i + 1, 23):02d}:00:00{suffix}",
+            }
+            for i, p in enumerate(prices)
+        ]
+
+    @staticmethod
+    def _mock_response(entries):
+        r = MagicMock()
+        r.json.return_value = entries
+        return r
+
+    @patch("plugins.electricity_price.electricity_price.requests.get")
+    def test_missing_required_field_raises(self, mock_get):
+        mock_get.return_value = self._mock_response([{
+            "EUR_per_kWh": 0.1, "EXR": 11.2,
+            "time_start": "2023-01-01 00:00:00", "time_end": "2023-01-01 01:00:00",
+        }])
+        with self.assertRaises(TypeError):
+            self.plugin.fetch_swedish_json("SE4")
+
+    @patch("plugins.electricity_price.electricity_price.requests.get")
+    def test_malformed_json_raises(self, mock_get):
+        r = MagicMock()
+        r.json.side_effect = ValueError("No JSON object could be decoded")
+        mock_get.return_value = r
+        with self.assertRaises(ValueError):
+            self.plugin.fetch_swedish_json("SE4")
+
+    @patch("plugins.electricity_price.electricity_price.requests.get")
+    def test_network_errors_propagate(self, mock_get):
+        mock_get.side_effect = requests.Timeout("timed out")
+        with self.assertRaises(requests.Timeout):
+            self.plugin.fetch_swedish_json("SE4")
+
+        mock_get.side_effect = requests.ConnectionError("failed to connect")
+        with self.assertRaises(requests.ConnectionError):
+            self.plugin.fetch_swedish_json("SE4")
+
+        mock_get.side_effect = None  # clear the previous side_effect, use return_value
+        r = MagicMock()
+        r.raise_for_status.side_effect = requests.HTTPError("404 Not Found")
+        mock_get.return_value = r
+        with self.assertRaises(requests.HTTPError):
+            self.plugin.fetch_swedish_json("SE4")
+
+    @patch("plugins.base_plugin.base_plugin.take_screenshot_html")
+    @patch("plugins.electricity_price.electricity_price.requests.get")
+    def test_negative_and_extreme_prices_render(self, mock_get, mock_shot):
+        mock_shot.return_value = Image.new("RGB", (800, 480))
+        for prices in ([-0.5 + i * 0.1 for i in range(24)], [10.0 + i for i in range(24)]):
+            mock_get.return_value = self._mock_response(self._entries(prices, with_t=False))
+            image = self.plugin.generate_image(self.base_settings, self.mock_device_config)
+            self.assertIsNotNone(image)
+
+    @patch("plugins.base_plugin.base_plugin.take_screenshot_html")
+    @patch("plugins.electricity_price.electricity_price.requests.get")
+    def test_now_label_uses_data_timezone(self, mock_get, mock_shot):
+        """The now-marker must follow the price data's timezone, not the device's."""
+        mock_shot.return_value = Image.new("RGB", (800, 480))
+        data_tz = dt_timezone(timedelta(hours=1))  # Swedish API offset (+01:00)
+        today = datetime.now(data_tz).strftime("%Y-%m-%d")
+        entries = self._entries([1.0 + i * 0.05 for i in range(24)], start_date=today, with_t=True)
+        mock_get.return_value = self._mock_response(entries)
+
+        ny_config = MagicMock()
+        ny_config.get_resolution.return_value = [800, 480]
+        ny_config.get_config.side_effect = lambda key, default=None: {
+            "orientation": "horizontal",
+            "timezone": "America/New_York",  # deliberately different from the data tz
+            "time_format": "24h",
+        }.get(key, default)
+
+        self.plugin.generate_image(self.base_settings, ny_config)
+        html = mock_shot.call_args[0][0]
+        m = re.search(r'let nowLabel = "([^"]+)"', html)
+        self.assertIsNotNone(m, "nowLabel missing from rendered HTML")
+
+        # Accept the slot containing "now" or the previous one (15-min boundary race)
+        after = datetime.now(data_tz)
+        valid = set()
+        for ref in (after, after - timedelta(minutes=15)):
+            valid.add(ref.replace(minute=(ref.minute // 15) * 15, second=0, microsecond=0).strftime("%H:%M"))
+        self.assertIn(m.group(1), valid)
+
+    @patch("plugins.base_plugin.base_plugin.take_screenshot_html")
+    @patch("plugins.electricity_price.electricity_price.requests.get")
+    def test_large_dataset_performance(self, mock_get, mock_shot):
+        import time
+        mock_shot.return_value = Image.new("RGB", (800, 480))
+        prices = [1.0 + (i % 24) * 0.05 + (i // 24) * 0.1 for i in range(7 * 24)]
+        mock_get.return_value = self._mock_response(self._entries(prices, with_t=False))
+
+        start = time.time()
+        image = self.plugin.generate_image(self.base_settings, self.mock_device_config)
+        elapsed = time.time() - start
+
+        self.assertIsNotNone(image)
+        self.assertLess(elapsed, 2.0)
+
+    def test_integration_real_api(self):
+        """Live API test, opt-in via RUN_INTEGRATION_TESTS=1."""
+        if not os.environ.get("RUN_INTEGRATION_TESTS"):
+            self.skipTest("Set RUN_INTEGRATION_TESTS=1 to run live API tests")
+        data = self.plugin.fetch_swedish_json("SE4")
+        self.assertGreater(len(data), 0)
 
 
 if __name__ == "__main__":
