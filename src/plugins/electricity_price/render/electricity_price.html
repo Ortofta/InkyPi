@@ -193,28 +193,7 @@
           grid: { color: 'rgba(0,0,0,0.08)', borderColor: 'rgba(0,0,0,0.8)' }
         }
       }
-    },
-    plugins: [{
-      id: 'annotation',
-      beforeDraw: function(chart) {
-        const ctx = chart.ctx;
-        const meta = chart.getDatasetMeta(0);
-        const point = meta.data[maxPriceIndex];
-
-        if (point) {
-          const x = point.x;
-          const y = point.y;
-
-          // Draw a small circle around the point
-          ctx.save();
-          ctx.beginPath();
-          ctx.arc(x, y, 6, 0, Math.PI * 2);
-          ctx.fillStyle = 'rgba(255, 0, 0, 0.15)';
-          ctx.fill();
-          ctx.restore();
-        }
-      }
-    }]
+    }
   });
 </script>
 {% endblock %}

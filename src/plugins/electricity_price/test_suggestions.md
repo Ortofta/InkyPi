@@ -40,7 +40,7 @@ def test_api_response_validation(self, mock_get):
     mock_get.return_value = mock_response
     
     with self.assertRaises(Exception):
-        self.plugin.fetch_json("SE4")
+        self.plugin.fetch_swedish_json("SE4")
 ```
 
 ### 2. Timezone Handling Tests
@@ -118,19 +118,19 @@ def test_network_errors(self, mock_get):
     # Test timeout
     mock_get.side_effect = requests.Timeout("Connection timed out")
     with self.assertRaises(requests.Timeout):
-        self.plugin.fetch_json("SE4")
+        self.plugin.fetch_swedish_json("SE4")
     
     # Test connection error
     mock_get.side_effect = requests.ConnectionError("Failed to connect")
     with self.assertRaises(requests.ConnectionError):
-        self.plugin.fetch_json("SE4")
+        self.plugin.fetch_swedish_json("SE4")
     
     # Test HTTP errors
     mock_response = MagicMock()
     mock_response.raise_for_status.side_effect = requests.HTTPError("404 Not Found")
     mock_get.return_value = mock_response
     with self.assertRaises(requests.HTTPError):
-        self.plugin.fetch_json("SE4")
+        self.plugin.fetch_swedish_json("SE4")
 ```
 
 ### 5. Performance Tests
@@ -174,7 +174,7 @@ def test_integration_with_real_api(self):
     
     # Test with real API
     try:
-        data = self.plugin.fetch_json("SE4")
+        data = self.plugin.fetch_swedish_json("SE4")
         self.assertGreater(len(data), 0)
         
         # Test image generation with real data

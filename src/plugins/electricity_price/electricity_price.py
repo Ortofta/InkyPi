@@ -78,7 +78,6 @@ class ElectricityPrice(BasePlugin):
         self.data = []
         self._entsoe_client = None
         self._last_exchange_rate = None
-        self.data_source = None  # Will be set from settings in generate_image
 
     def generate_settings_template(self):
         """Generate default settings template."""
@@ -101,9 +100,48 @@ class ElectricityPrice(BasePlugin):
         
         return template_params
 
-    def _get_data_source(self, settings: Dict[str, Any]) -> str:
-        """Get the configured data source from settings."""
-        return settings.get("data_source", "auto")
+    def _fetch_data(self, zone: str, settings: Dict[str, Any], use_swedish: bool):
+        """
+        Fetch price data, falling back to the other source on failure or empty data.
+
+        Returns:
+            Tuple of (data, use_swedish, fell_back)
+        """
+        try:
+            if use_swedish:
+                logger.info(f"Using Swedish API for zone {zone}")
+                data = self.fetch_swedish_json(zone)
+            else:
+                logger.info(f"Using ENTSO-E API for zone {zone}")
+                data = self.fetch_entsoe_json(zone, settings)
+        except Exception as e:
+            logger.error(f"Failed to fetch price data: {e}")
+            if use_swedish and ENTSOE_AVAILABLE:
+                logger.info(f"Falling back to ENTSO-E API for zone {zone}")
+                try:
+                    return self.fetch_entsoe_json(zone, settings), False, True
+                except Exception as e2:
+                    logger.error(f"Both APIs failed: Swedish={e}, ENTSO-E={e2}")
+                    raise RuntimeError(f"Failed to fetch price data: {e}")
+            elif not use_swedish and is_swedish_zone(zone):
+                logger.info(f"Falling back to Swedish API for zone {zone}")
+                try:
+                    return self.fetch_swedish_json(zone), True, True
+                except Exception as e2:
+                    logger.error(f"Both APIs failed: ENTSO-E={e}, Swedish={e2}")
+                    raise RuntimeError(f"Failed to fetch price data: {e}")
+            else:
+                raise RuntimeError(f"Failed to fetch price data: {e}")
+
+        # If ENTSO-E returned empty data for a Swedish zone, try the Swedish API
+        if not data and not use_swedish and is_swedish_zone(zone):
+            logger.info(f"ENTSO-E returned no data for Swedish zone {zone}, falling back to Swedish API")
+            try:
+                return self.fetch_swedish_json(zone), True, True
+            except Exception as e:
+                logger.error(f"Both APIs returned no data: ENTSO-E (empty), Swedish={e}")
+
+        return data, use_swedish, False
 
     def _should_use_swedish_api(self, zone: str, data_source: str) -> bool:
         """
@@ -203,52 +241,12 @@ class ElectricityPrice(BasePlugin):
             PIL Image object
         """
         zone = settings.get("zone", "SE4")
-        data_source = self._get_data_source(settings)
-        
-        # Determine which API to use
+        data_source = settings.get("data_source", "auto")
+
+        # Determine which API to use, then fetch with cross-source fallback
         use_swedish = self._should_use_swedish_api(zone, data_source)
-        
-        try:
-            if use_swedish:
-                logger.info(f"Using Swedish API for zone {zone}")
-                self.data = self.fetch_swedish_json(zone)
-            else:
-                logger.info(f"Using ENTSO-E API for zone {zone}")
-                self.data = self.fetch_entsoe_json(zone, settings)
-        except Exception as e:
-            logger.error(f"Failed to fetch price data: {e}")
-            # Fallback: try the other source if one fails
-            if use_swedish and ENTSOE_AVAILABLE:
-                logger.info(f"Falling back to ENTSO-E API for zone {zone}")
-                try:
-                    self.data = self.fetch_entsoe_json(zone, settings)
-                except Exception as e2:
-                    logger.error(f"Both APIs failed: Swedish={e}, ENTSO-E={e2}")
-                    raise RuntimeError(f"Failed to fetch price data: {e}")
-            elif not use_swedish and is_swedish_zone(zone):
-                logger.info(f"Falling back to Swedish API for zone {zone}")
-                try:
-                    self.data = self.fetch_swedish_json(zone)
-                except Exception as e2:
-                    logger.error(f"Both APIs failed: ENTSO-E={e}, Swedish={e2}")
-                    raise RuntimeError(f"Failed to fetch price data: {e}")
-            else:
-                raise RuntimeError(f"Failed to fetch price data: {e}")
-        
-        # Additional fallback: if ENTSO-E returned empty data for a Swedish zone, try Swedish API
-        if not self.data and not use_swedish and is_swedish_zone(zone):
-            logger.info(f"ENTSO-E returned no data for Swedish zone {zone}, falling back to Swedish API")
-            try:
-                self.data = self.fetch_swedish_json(zone)
-                # Update data source info since we fell back
-                use_swedish = True
-                data_source_fallback = True
-            except Exception as e:
-                logger.error(f"Both APIs returned no data: ENTSO-E (empty), Swedish={e}")
-                data_source_fallback = False
-        else:
-            data_source_fallback = False
-        
+        self.data, use_swedish, data_source_fallback = self._fetch_data(zone, settings, use_swedish)
+
         # Resolve display currency ("auto" = the zone's native currency)
         currency = (settings.get("currency") or "auto").strip().upper()
         if currency == "AUTO":
@@ -279,13 +277,11 @@ class ElectricityPrice(BasePlugin):
             dimensions = dimensions[::-1]
 
         timezone = device_config.get_config("timezone", default="America/New_York")
-        time_format = device_config.get_config("time_format", default="12h")
         tz = pytz.timezone(timezone)
 
         template_params = {
             "data": data_dicts,
             "plugin_settings": settings,
-            "title": "Electricity Prices - " + datetime.now(tz).strftime("%Y-%m-%d"),
             "current_date": datetime.now(tz).strftime("%Y-%m-%d"),
             "zone": zone,
             "currency": currency,
@@ -294,14 +290,6 @@ class ElectricityPrice(BasePlugin):
             "data_source_info": data_source_info,
             "warning_message": warning_message,
         }
-
-        # Add last refresh time
-        now = datetime.now(tz)
-        if time_format == "24h":
-            last_refresh_time = now.strftime("%Y-%m-%d %H:%M")
-        else:
-            last_refresh_time = now.strftime("%Y-%m-%d %I:%M %p")
-        template_params["last_refresh_time"] = last_refresh_time
 
         # "Now" marker label for the current 15-minute interval, computed in the
         # data's own timezone (device tz may differ; ENTSO-E times are UTC)
@@ -460,28 +448,6 @@ class ElectricityPrice(BasePlugin):
         rate = get_fallback_rate("EUR", currency)
         self._last_exchange_rate = rate
         return rate
-
-    def fetch_json(self, zone: str = "SE4") -> List[ElectricityPriceEntry]:
-        """
-        Fetch price data (backward compatible method).
-        
-        This method maintains backward compatibility with the original API.
-        For new code, prefer using fetch_swedish_json() or fetch_entsoe_json() directly.
-        
-        Args:
-            zone: Zone code (default: SE4)
-            
-        Returns:
-            List of ElectricityPriceEntry objects
-        """
-        # For backward compatibility, use Swedish API for SE zones
-        if is_swedish_zone(zone):
-            return self.fetch_swedish_json(zone)
-        else:
-            # For non-Swedish zones, we need settings
-            # Use default settings with auto data source
-            settings = {"data_source": "auto", "zone": zone}
-            return self.fetch_entsoe_json(zone, settings)
 
     def close(self):
         """Clean up resources."""

@@ -52,6 +52,22 @@ class TestElectricityPrice(unittest.TestCase):
         # Base settings
         self.base_settings = {"zone": "SE4", "show_max_label": True}
 
+    @staticmethod
+    def _mock_prices(mock_get, prices, start="2023-01-01"):
+        """Point the mocked requests.get at a JSON response with the given SEK prices."""
+        resp = MagicMock()
+        resp.json.return_value = [
+            {
+                "SEK_per_kWh": p,
+                "EUR_per_kWh": round(p / 11.2, 4),
+                "EXR": 11.2,
+                "time_start": f"{start} {i:02d}:00:00",
+                "time_end": f"{start} {min(i + 1, 23):02d}:00:00",
+            }
+            for i, p in enumerate(prices)
+        ]
+        mock_get.return_value = resp
+
     def test_get_service_url(self):
         """Test that the service URL is generated correctly"""
         url = get_service_url("SE3")
@@ -76,52 +92,30 @@ class TestElectricityPrice(unittest.TestCase):
         self.assertEqual(entry.time_end, "2023-01-01 01:00:00")
 
     @patch("plugins.electricity_price.electricity_price.requests.get")
-    def test_fetch_json_success(self, mock_get):
+    def test_fetch_swedish_json_success(self, mock_get):
         """Test successful JSON fetching"""
-        # Mock response
-        mock_response = MagicMock()
-        mock_response.json.return_value = [
-            {
-                "SEK_per_kWh": 1.23,
-                "EUR_per_kWh": 0.11,
-                "EXR": 11.2,
-                "time_start": "2023-01-01 00:00:00",
-                "time_end": "2023-01-01 01:00:00",
-            }
-        ]
-        mock_get.return_value = mock_response
+        self._mock_prices(mock_get, [1.23])
 
-        result = self.plugin.fetch_json("SE4")
+        result = self.plugin.fetch_swedish_json("SE4")
 
         self.assertEqual(len(result), 1)
         self.assertIsInstance(result[0], ElectricityPriceEntry)
         self.assertEqual(result[0].SEK_per_kWh, 1.23)
 
     @patch("plugins.electricity_price.electricity_price.requests.get")
-    def test_fetch_json_error(self, mock_get):
+    def test_fetch_swedish_json_error(self, mock_get):
         """Test error handling in JSON fetching"""
         mock_get.side_effect = Exception("Network error")
 
         with self.assertRaises(Exception):
-            self.plugin.fetch_json("SE4")
+            self.plugin.fetch_swedish_json("SE4")
 
     @patch("plugins.base_plugin.base_plugin.take_screenshot_html")
     @patch("plugins.electricity_price.electricity_price.requests.get")
     def test_generate_image_success(self, mock_get, mock_shot):
         """Test successful image generation"""
         # Mock response with realistic data
-        mock_response = MagicMock()
-        mock_response.json.return_value = [
-            {
-                "SEK_per_kWh": 1.23 + i * 0.1,
-                "EUR_per_kWh": 0.11 + i * 0.01,
-                "EXR": 11.2,
-                "time_start": f"2023-01-01 {i:02d}:00:00",
-                "time_end": f"2023-01-01 {i + 1:02d}:00:00",
-            }
-            for i in range(24)
-        ]
-        mock_get.return_value = mock_response
+        self._mock_prices(mock_get, [1.23 + i * 0.1 for i in range(24)])
         mock_shot.return_value = Image.new("RGB", (800, 480))
 
         # Test with max label enabled
@@ -142,18 +136,7 @@ class TestElectricityPrice(unittest.TestCase):
     def test_generate_image_max_label_disabled(self, mock_get, mock_shot):
         """Test image generation with max label disabled"""
         # Mock response
-        mock_response = MagicMock()
-        mock_response.json.return_value = [
-            {
-                "SEK_per_kWh": 1.23 + i * 0.1,
-                "EUR_per_kWh": 0.11 + i * 0.01,
-                "EXR": 11.2,
-                "time_start": f"2023-01-01 {i:02d}:00:00",
-                "time_end": f"2023-01-01 {i + 1:02d}:00:00",
-            }
-            for i in range(24)
-        ]
-        mock_get.return_value = mock_response
+        self._mock_prices(mock_get, [1.23 + i * 0.1 for i in range(24)])
         mock_shot.return_value = Image.new("RGB", (800, 480))
 
         # Test with max label disabled (form submits strings)
@@ -172,18 +155,7 @@ class TestElectricityPrice(unittest.TestCase):
     def test_generate_image_different_zones(self, mock_get):
         """Test image generation with different zones"""
         # Mock response
-        mock_response = MagicMock()
-        mock_response.json.return_value = [
-            {
-                "SEK_per_kWh": 1.23 + i * 0.1,
-                "EUR_per_kWh": 0.11 + i * 0.01,
-                "EXR": 11.2,
-                "time_start": f"2023-01-01 {i:02d}:00:00",
-                "time_end": f"2023-01-01 {i + 1:02d}:00:00",
-            }
-            for i in range(24)
-        ]
-        mock_get.return_value = mock_response
+        self._mock_prices(mock_get, [1.23 + i * 0.1 for i in range(24)])
 
         for zone in ["SE1", "SE2", "SE3", "SE4"]:
             settings = self.base_settings.copy()
@@ -198,18 +170,7 @@ class TestElectricityPrice(unittest.TestCase):
     def test_generate_image_vertical_orientation(self, mock_get):
         """Test image generation with vertical orientation"""
         # Mock response
-        mock_response = MagicMock()
-        mock_response.json.return_value = [
-            {
-                "SEK_per_kWh": 1.23 + i * 0.1,
-                "EUR_per_kWh": 0.11 + i * 0.01,
-                "EXR": 11.2,
-                "time_start": f"2023-01-01 {i:02d}:00:00",
-                "time_end": f"2023-01-01 {i + 1:02d}:00:00",
-            }
-            for i in range(24)
-        ]
-        mock_get.return_value = mock_response
+        self._mock_prices(mock_get, [1.23 + i * 0.1 for i in range(24)])
 
         # Mock vertical device config
         mock_vertical_config = MagicMock()
@@ -236,9 +197,7 @@ class TestElectricityPrice(unittest.TestCase):
     def test_generate_image_empty_data(self, mock_get):
         """Test image generation with empty data"""
         # Mock empty response
-        mock_response = MagicMock()
-        mock_response.json.return_value = []
-        mock_get.return_value = mock_response
+        self._mock_prices(mock_get, [])
 
         # The plugin should handle empty data gracefully by not raising an exception
         # but the chart rendering might fail, so we expect some kind of error
@@ -256,9 +215,7 @@ class TestElectricityPrice(unittest.TestCase):
     def test_generate_image_invalid_data(self, mock_get):
         """Test image generation with invalid data"""
         # Mock response with invalid data structure
-        mock_response = MagicMock()
-        mock_response.json.return_value = [{"invalid_key": "invalid_value"}]
-        mock_get.return_value = mock_response
+        mock_get.return_value = MagicMock(json=MagicMock(return_value=[{"invalid_key": "invalid_value"}]))
 
         with self.assertRaises(Exception):
             self.plugin.generate_image(self.base_settings, self.mock_device_config)
@@ -276,18 +233,7 @@ class TestElectricityPrice(unittest.TestCase):
     def test_different_time_formats(self, mock_get):
         """Test image generation with different time formats"""
         # Mock response
-        mock_response = MagicMock()
-        mock_response.json.return_value = [
-            {
-                "SEK_per_kWh": 1.23 + i * 0.1,
-                "EUR_per_kWh": 0.11 + i * 0.01,
-                "EXR": 11.2,
-                "time_start": f"2023-01-01 {i:02d}:00:00",
-                "time_end": f"2023-01-01 {i + 1:02d}:00:00",
-            }
-            for i in range(24)
-        ]
-        mock_get.return_value = mock_response
+        self._mock_prices(mock_get, [1.23 + i * 0.1 for i in range(24)])
 
         # Test with 12h format
         mock_12h_config = MagicMock()
